@@ -203,7 +203,7 @@ impl Terminal for Console {
             // Window and screen buffer are the same size. Just erase everything.
             try!(self.clear_area(
                 COORD{X: 0, Y: 0},
-                (info.dwSize.X * info.dwSize.Y) as DWORD));
+                (info.dwSize.X as DWORD * info.dwSize.Y as DWORD)));
         } else {
             let down = min(
                 // Distance we can move down
@@ -269,12 +269,12 @@ impl Terminal for Console {
         let start = info.dwCursorPosition;
         let size = info.dwSize;
 
-        let lines = size.Y - start.Y;
-        let cols = size.X - start.X;
+        let lines = (size.Y - start.Y) as DWORD;
+        let cols = (size.X - start.X) as DWORD;
 
-        let n = lines * size.X + cols;
+        let n = lines * size.X as DWORD + cols;
 
-        self.clear_area(start, n as DWORD)
+        self.clear_area(start, n)
     }
 
     fn move_up(&self, n: usize) -> io::Result<()> {
