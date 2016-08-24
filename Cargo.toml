@@ -3,7 +3,7 @@ name = "linefeed"
 description = "Interactive terminal input reader"
 
 authors = ["Murarth <murarth@gmail.com>"]
-version = "0.1.0"
+version = "0.1.1"
 
 documentation = "http://murarth.github.io/linefeed/linefeed/index.html"
 homepage = "https://github.com/murarth/linefeed"
