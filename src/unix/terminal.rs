@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use libc::{
     c_int, c_ushort,
+    time_t, suseconds_t,
     ioctl,
     STDIN_FILENO, STDOUT_FILENO, TIOCGWINSZ,
 };
@@ -207,7 +208,10 @@ impl terminal::Terminal for Terminal {
     fn wait_for_input(&self, timeout: Option<Duration>) -> io::Result<bool> {
         let mut r_fds = FdSet::new();
         r_fds.insert(STDIN_FILENO);
-        let mut e_fds = r_fds.clone();
+
+        // FIXME: FdSet does not implement clone
+        let mut e_fds = FdSet::new();
+        r_fds.insert(STDIN_FILENO);
 
         let mut timeout = timeout.map(to_timeval);
 
@@ -355,14 +359,14 @@ fn get_winsize(fd: c_int) -> io::Result<Winsize> {
 
 fn to_timeval(d: Duration) -> TimeVal {
     let sec = match d.as_secs() {
-        n if n > i64::max_value() as u64 => i64::max_value(),
-        n => n as i64
+        n if n > time_t::max_value() as u64 => time_t::max_value(),
+        n => n as time_t
     };
 
     let nano = d.subsec_nanos();
 
     TimeVal{
         tv_sec: sec,
-        tv_usec: nano as i64 / 1_000,
+        tv_usec: nano as suseconds_t / 1_000,
     }
 }
