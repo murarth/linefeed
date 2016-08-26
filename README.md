@@ -27,8 +27,7 @@ linefeed = "0.1"
 
 ### Dependencies
 
-On Unix systems, `linefeed` requires `libtinfo`,
-a component of the `ncurses` project.
+On Unix systems, `linefeed` requires `libncursesw`.
 
 ### Demo
 

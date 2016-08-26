@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 use libc::{c_char, c_int, c_long, STDOUT_FILENO};
 
-#[link(name = "tinfo")]
+#[link(name = "ncursesw")]
 extern "C" {
     fn setupterm(term: *const c_char,
         file_des: c_int, err_ret: *mut c_int) -> c_int;
