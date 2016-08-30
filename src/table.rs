@@ -146,12 +146,15 @@ pub fn format_columns<S: AsRef<str>>(strs: &[S], screen_width: usize,
 
     let n_strs = strs.len();
 
-    let (min_len, max_len) = min_max(strs.iter().map(|s| s.as_ref().chars().count()));
+    let (mut min_len, mut max_len) = min_max(strs.iter().map(|s| s.as_ref().chars().count()));
+
+    if min_len == 0 { min_len = 1; }
+    if max_len == 0 { max_len = 1; }
 
     let mut min_cols = min(n_strs, screen_width / max_len);
     let max_cols = min(n_strs, screen_width / min_len);
 
-    if min_cols == 1 {
+    if min_cols <= 1 {
         // No point in checking whether text can fit within one column
         min_cols = 2;
     }
@@ -211,4 +214,25 @@ fn min_max<I>(iter: I) -> (usize, usize) where I: Iterator<Item=usize> {
     }
 
     (min, max)
+}
+
+#[cfg(test)]
+mod test {
+    use std::iter::repeat;
+    use super::format_columns;
+
+    #[test]
+    fn test_long_item() {
+        let strs = (1..500).map(|n| repeat('x').take(n).collect())
+            .collect::<Vec<String>>();
+
+        assert_matches!(format_columns(&strs, 80, false), None);
+    }
+
+    #[test]
+    fn test_zero_item() {
+        let strs = ["", "", ""];
+
+        assert_eq!(format_columns(&strs, 80, false), Some(vec![2, 2, 0]));
+    }
 }
