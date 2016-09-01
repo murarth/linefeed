@@ -27,7 +27,7 @@ linefeed = "0.1"
 
 ### Dependencies
 
-On Unix systems, `linefeed` requires `libncursesw`.
+On Unix systems, `linefeed` requires `libncursesw` (`libncurses` on Mac OS X).
 
 ### Demo
 
