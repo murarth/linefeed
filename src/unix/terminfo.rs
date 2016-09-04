@@ -194,7 +194,7 @@ pub fn get_num(name: &str) -> Result<i32, Error> {
 
     let res = unsafe { tigetnum(c_name.as_ptr()) };
 
-    if res == -2 {
+    if res < 0 {
         Err(Error::NotNumericCapability(name.to_owned()))
     } else {
         Ok(res as i32)
@@ -206,11 +206,9 @@ pub fn get_str(name: &str) -> Result<&'static CStr, Error> {
 
     let res = unsafe { tigetstr(c_name.as_ptr()) };
 
-    if res == neg_one() {
+    if res.is_null() || res == neg_one() {
         Err(Error::NotStringCapability(name.to_owned()))
     } else {
-        assert!(!res.is_null());
-
         let s = unsafe { CStr::from_ptr(res) };
 
         Ok(s)
