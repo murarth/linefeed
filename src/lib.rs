@@ -31,7 +31,7 @@ pub use command::Command;
 pub use complete::{Completer, Completion};
 pub use function::Function;
 pub use reader::Reader;
-pub use terminal::Terminal;
+pub use terminal::{DefaultTerminal, Terminal};
 
 pub mod chars;
 pub mod command;
