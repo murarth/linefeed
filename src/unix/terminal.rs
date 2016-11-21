@@ -1,14 +1,14 @@
 use std::env::var;
 use std::ffi::CStr;
-use std::io::{self, stdin, stdout, stderr, Read, Write};
+use std::io::{self, stdout, stderr, Write};
 use std::mem::zeroed;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use std::time::Duration;
 
 use libc::{
-    c_int, c_ushort,
-    time_t, suseconds_t,
-    ioctl,
+    c_int, c_ushort, c_void,
+    size_t, time_t, suseconds_t,
+    ioctl, read,
     STDIN_FILENO, STDOUT_FILENO, TIOCGWINSZ,
 };
 
@@ -290,10 +290,7 @@ impl terminal::Terminal for Terminal {
         unsafe {
             buf.set_len(cap);
 
-            let stdin = stdin();
-            let mut lock = stdin.lock();
-
-            let result = lock.read(&mut buf[len..]);
+            let result = read_stdin(&mut buf[len..]);
             buf.set_len(len);
 
             n = try!(result);
@@ -309,6 +306,30 @@ impl terminal::Terminal for Terminal {
 
         try!(lock.write_all(s.as_bytes()));
         lock.flush()
+    }
+}
+
+fn read_stdin(buf: &mut [u8]) -> io::Result<usize> {
+    retry(|| {
+        let res = unsafe { read(STDIN_FILENO,
+            buf.as_mut_ptr() as *mut c_void, buf.len() as size_t) };
+
+        if res == -1 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(res as usize)
+        }
+    })
+}
+
+// Retries a closure when the error kind is Interrupted
+fn retry<F, R>(mut f: F) -> io::Result<R>
+        where F: FnMut() -> io::Result<R> {
+    loop {
+        match f() {
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => (),
+            res => return res
+        }
     }
 }
 

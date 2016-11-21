@@ -30,7 +30,7 @@ extern "C" {
 }
 
 extern "C" fn putchar(ch: c_char) -> c_int {
-    match stdout().write(&[ch as u8]) {
+    match stdout().write_all(&[ch as u8]) {
         Ok(_) => ch as u8 as c_int,
         Err(_) => -1
     }
