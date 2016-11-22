@@ -254,7 +254,13 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     /// Interactively reads a line from `stdin`.
-    /// If end-of-file occurs, returns `None`.
+    ///
+    /// If end-of-file occurs, returns `ReadResult::Eof`.
+    ///
+    /// If a reported signal (see `set_report_signal`) is received,
+    /// it is returned as `ReadResult::Signal(_)`.
+    ///
+    /// Otherwise, user input is returned as `ReadResult::Input(_)`.
     pub fn read_line(&mut self) -> io::Result<ReadResult> {
         let _guard = try!(self.term.prepare(
             self.catch_signals, self.report_signals.clone()));
