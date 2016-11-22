@@ -3,7 +3,7 @@ extern crate linefeed;
 use std::io;
 use std::rc::Rc;
 
-use linefeed::{Command, Function, Reader, Terminal};
+use linefeed::{Command, Function, Reader, ReadResult, Terminal};
 
 const DEMO_FN_SEQ: &'static str = "\x18d"; // Ctrl-X, d
 
@@ -16,7 +16,7 @@ fn main() {
 
     reader.bind_sequence(DEMO_FN_SEQ, Command::from_str("demo-function"));
 
-    while let Some(line) = reader.read_line().unwrap() {
+    while let Ok(ReadResult::Input(line)) = reader.read_line() {
         println!("read input: {:?}", line);
     }
 

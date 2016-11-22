@@ -23,7 +23,7 @@ use function::Function;
 use inputrc::{parse_file, Directive};
 use sys::path::{env_init_file, system_init_file, user_init_file};
 use table::{format_columns, Table};
-use terminal::{CursorMode, DefaultTerminal, Signal, Size, Terminal};
+use terminal::{CursorMode, DefaultTerminal, Signal, SignalSet, Size, Terminal};
 use util::{longest_common_prefix, RangeArgument};
 
 /// Default `keyseq_timeout`, in milliseconds
@@ -49,6 +49,17 @@ pub const BLINK_TIMEOUT_MS: u64 = 500;
 
 const TAB_STOP: usize = 8;
 const MAX_KILLS: usize = 10;
+
+/// The result of `Reader::read_line`
+#[derive(Debug)]
+pub enum ReadResult {
+    /// User issued end-of-file
+    Eof,
+    /// User input received
+    Input(String),
+    /// Reported signal was received
+    Signal(Signal),
+}
 
 /// Interactively reads user input
 pub struct Reader<Term: Terminal> {
@@ -137,6 +148,7 @@ pub struct Reader<Term: Terminal> {
 
     blink_matching_paren: bool,
     catch_signals: bool,
+    report_signals: SignalSet,
     comment_begin: Cow<'static, str>,
     completion_display_width: usize,
     completion_query_items: usize,
@@ -226,6 +238,7 @@ impl<Term: Terminal> Reader<Term> {
 
             blink_matching_paren: false,
             catch_signals: true,
+            report_signals: SignalSet::new(),
             comment_begin: "#".into(),
             completion_display_width: usize::max_value(),
             completion_query_items: 100,
@@ -242,8 +255,9 @@ impl<Term: Terminal> Reader<Term> {
 
     /// Interactively reads a line from `stdin`.
     /// If end-of-file occurs, returns `None`.
-    pub fn read_line(&mut self) -> io::Result<Option<String>> {
-        let _guard = try!(self.term.prepare(self.catch_signals));
+    pub fn read_line(&mut self) -> io::Result<ReadResult> {
+        let _guard = try!(self.term.prepare(
+            self.catch_signals, self.report_signals.clone()));
         let res = self.read_line_impl();
 
         // Restore normal cursor mode
@@ -254,12 +268,15 @@ impl<Term: Terminal> Reader<Term> {
         res
     }
 
-    fn read_line_impl(&mut self) -> io::Result<Option<String>> {
+    fn read_line_impl(&mut self) -> io::Result<ReadResult> {
         try!(self.reset_input());
         try!(self.draw_prompt());
 
         while !(self.end_of_file || self.input_accepted) {
             if let Some(sig) = self.term.take_signal() {
+                if self.report_signals.contains(sig) {
+                    return Ok(ReadResult::Signal(sig));
+                }
                 try!(self.handle_signal(sig));
             }
 
@@ -310,10 +327,9 @@ impl<Term: Terminal> Reader<Term> {
         if self.input_accepted {
             self.backup_buffer.clear();
             let s = replace(&mut self.buffer, String::new());
-            Ok(Some(s))
+            Ok(ReadResult::Input(s))
         } else {
-            // EOF
-            Ok(None)
+            Ok(ReadResult::Eof)
         }
     }
 
@@ -2260,8 +2276,28 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     /// Sets whether `linefeed` will catch certain signals.
+    ///
+    /// This setting is `true` by default. It can be disabled to allow the
+    /// host program to handle signals itself.
     pub fn set_catch_signals(&mut self, enabled: bool) {
         self.catch_signals = enabled;
+    }
+
+    /// Returns whether the given `Signal` is to be reported.
+    pub fn report_signal(&self, signal: Signal) -> bool {
+        self.report_signals.contains(signal)
+    }
+
+    /// Sets whether to report the given `Signal`.
+    ///
+    /// When a reported signal is received via the terminal, it will be returned
+    /// from `Reader::read_line` as `Ok(Signal(signal))`.
+    pub fn set_report_signal(&mut self, signal: Signal, set: bool) {
+        if set {
+            self.report_signals.insert(signal);
+        } else {
+            self.report_signals.remove(signal);
+        }
     }
 
     /// Returns whether Tab completion is disabled.

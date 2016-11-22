@@ -27,6 +27,44 @@ pub enum Signal {
     Quit,
 }
 
+/// Contains a set of signals
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignalSet(u32);
+
+impl SignalSet {
+    /// Returns an empty `SignalSet`.
+    pub fn new() -> SignalSet {
+        SignalSet(0)
+    }
+
+    /// Returns whether the given `Signal` is contained in the set.
+    pub fn contains(&self, signal: Signal) -> bool {
+        self.0 & signal.as_bit() != 0
+    }
+
+    /// Inserts the given `Signal` into the set.
+    pub fn insert(&mut self, signal: Signal) {
+        self.0 |= signal.as_bit();
+    }
+
+    /// Removes the given `Signal` from the set.
+    pub fn remove(&mut self, signal: Signal) {
+        self.0 &= !signal.as_bit();
+    }
+}
+
+impl Default for SignalSet {
+    fn default() -> SignalSet {
+        SignalSet::new()
+    }
+}
+
+impl Signal {
+    fn as_bit(&self) -> u32 {
+        1 << (*self as u32)
+    }
+}
+
 /// Represents the size of a terminal window
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Size {
@@ -113,7 +151,11 @@ pub trait Terminal: Sized {
     ///
     /// If `catch_signals` is `true`, signal handlers will be registered.
     /// These are also restored when the guard value is dropped.
-    fn prepare(&self, catch_signals: bool) -> io::Result<Self::PrepareGuard>;
+    ///
+    /// The set of signals caught should include those contained in
+    /// `report_signals`.
+    fn prepare(&self, catch_signals: bool, report_signals: SignalSet)
+        -> io::Result<Self::PrepareGuard>;
 
     /// If the process received a signal since the last call to `take_signal`,
     /// return it. Otherwise, return `None`.

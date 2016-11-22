@@ -3,13 +3,13 @@
 //! # Basic example
 //!
 //! ```no_run
-//! use linefeed::Reader;
+//! use linefeed::{Reader, ReadResult};
 //!
 //! let mut reader = Reader::new("my-application").unwrap();
 //!
 //! reader.set_prompt("my-app> ");
 //!
-//! while let Some(input) = reader.read_line().unwrap() {
+//! while let Ok(ReadResult::Input(input)) = reader.read_line() {
 //!     println!("got input {:?}", input);
 //! }
 //!
@@ -30,8 +30,8 @@ extern crate libc;
 pub use command::Command;
 pub use complete::{Completer, Completion, Suffix};
 pub use function::Function;
-pub use reader::Reader;
-pub use terminal::{DefaultTerminal, Terminal};
+pub use reader::{Reader, ReadResult};
+pub use terminal::{DefaultTerminal, Signal, Terminal};
 
 pub mod chars;
 pub mod command;

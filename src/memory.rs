@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use chars::{ctrl, RUBOUT};
-use terminal::{CursorMode, Signal, Size, Terminal};
+use terminal::{CursorMode, Signal, SignalSet, Size, Terminal};
 
 /// Default size of a `MemoryTerminal` buffer
 pub const DEFAULT_SIZE: Size = Size{
@@ -406,7 +406,8 @@ impl Terminal for MemoryTerminal {
         Ok(self.has_input())
     }
 
-    fn prepare(&self, _catch_signals: bool) -> io::Result<()> { Ok(()) }
+    fn prepare(&self, _catch_signals: bool, _report_signals: SignalSet)
+        -> io::Result<()> { Ok(()) }
     fn read_signals(&self) -> io::Result<()> { Ok(()) }
 
     fn get_signal(&self) -> Option<Signal> { None }

@@ -17,7 +17,7 @@ use nix::sys::select::{select, FdSet};
 use nix::sys::signal::{
     sigaction,
     SaFlags, SigAction, SigHandler, SigNum, SigSet,
-    SIGINT,
+    SIGINT, SIGTSTP, SIGQUIT,
 };
 use nix::sys::termios::{
     tcgetattr, tcsetattr,
@@ -28,7 +28,7 @@ use nix::sys::termios::{
 use nix::sys::time::TimeVal;
 
 use sys::terminfo::{setup_term, get_str, put, term_param};
-use terminal::{self, CursorMode, Signal, Size};
+use terminal::{self, CursorMode, Signal, SignalSet, Size};
 
 pub struct Terminal {
     /// Terminal name
@@ -63,14 +63,31 @@ pub struct Terminal {
 pub struct TerminalGuard {
     old_tio: Termios,
     old_sigint: Option<SigAction>,
+    old_sigtstp: Option<SigAction>,
+    old_sigquit: Option<SigAction>,
 }
 
 impl TerminalGuard {
+    fn new(old_tio: Termios) -> TerminalGuard {
+        TerminalGuard{
+            old_tio: old_tio,
+            old_sigint: None,
+            old_sigtstp: None,
+            old_sigquit: None,
+        }
+    }
+
     fn restore(&self) -> io::Result<()> {
         try!(tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &self.old_tio));
 
         if let Some(ref old_sigint) = self.old_sigint {
             unsafe { try!(sigaction(SIGINT, old_sigint)); }
+        }
+        if let Some(ref old_sigtstp) = self.old_sigtstp {
+            unsafe { try!(sigaction(SIGTSTP, old_sigtstp)); }
+        }
+        if let Some(ref old_sigquit) = self.old_sigquit {
+            unsafe { try!(sigaction(SIGQUIT, old_sigquit)); }
         }
 
         Ok(())
@@ -229,7 +246,8 @@ impl terminal::Terminal for Terminal {
         }
     }
 
-    fn prepare(&self, catch_signals: bool) -> io::Result<TerminalGuard> {
+    fn prepare(&self, catch_signals: bool, report_signals: SignalSet)
+            -> io::Result<TerminalGuard> {
         let old_tio = try!(tcgetattr(STDIN_FILENO));
         let mut tio = old_tio;
 
@@ -240,10 +258,7 @@ impl terminal::Terminal for Terminal {
 
         try!(tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &tio));
 
-        let mut guard = TerminalGuard{
-            old_tio: old_tio,
-            old_sigint: None,
-        };
+        let mut guard = TerminalGuard::new(old_tio);
 
         if catch_signals {
             LAST_SIGNAL.store(!0, Ordering::Relaxed);
@@ -252,6 +267,13 @@ impl terminal::Terminal for Terminal {
                 SaFlags::empty(), SigSet::all());
 
             guard.old_sigint = Some(unsafe { try!(sigaction(SIGINT, &action)) });
+
+            if report_signals.contains(Signal::Suspend) {
+                guard.old_sigtstp = Some(unsafe { try!(sigaction(SIGTSTP, &action)) });
+            }
+            if report_signals.contains(Signal::Quit) {
+                guard.old_sigquit = Some(unsafe { try!(sigaction(SIGQUIT, &action)) });
+            }
         };
 
         Ok(guard)
@@ -274,10 +296,7 @@ impl terminal::Terminal for Terminal {
 
         try!(tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &tio));
 
-        Ok(TerminalGuard{
-            old_tio: old_tio,
-            old_sigint: None,
-        })
+        Ok(TerminalGuard::new(old_tio))
     }
 
     fn read(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
@@ -353,6 +372,8 @@ fn conv_signal(n: usize) -> Option<Signal> {
     } else {
         match n as SigNum {
             SIGINT  => Some(Signal::Interrupt),
+            SIGTSTP => Some(Signal::Suspend),
+            SIGQUIT => Some(Signal::Quit),
             _ => None
         }
     }

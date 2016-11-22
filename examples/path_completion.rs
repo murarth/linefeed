@@ -2,7 +2,7 @@ extern crate linefeed;
 
 use std::rc::Rc;
 
-use linefeed::Reader;
+use linefeed::{Reader, ReadResult};
 use linefeed::complete::PathCompleter;
 
 fn main() {
@@ -11,7 +11,7 @@ fn main() {
     reader.set_completer(Rc::new(PathCompleter));
     reader.set_prompt("path> ");
 
-    while let Some(line) = reader.read_line().unwrap() {
+    while let Ok(ReadResult::Input(line)) = reader.read_line() {
         println!("read input: {:?}", line);
 
         if !line.trim().is_empty() {

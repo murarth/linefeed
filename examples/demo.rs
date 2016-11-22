@@ -2,7 +2,7 @@ extern crate linefeed;
 
 use std::rc::Rc;
 
-use linefeed::Reader;
+use linefeed::{Reader, ReadResult};
 use linefeed::chars::escape_sequence;
 use linefeed::command::COMMANDS;
 use linefeed::complete::{Completer, Completion};
@@ -20,7 +20,7 @@ fn main() {
     reader.set_completer(Rc::new(DemoCompleter));
     reader.set_prompt("demo> ");
 
-    while let Some(line) = reader.read_line().unwrap() {
+    while let Ok(ReadResult::Input(line)) = reader.read_line() {
         if !line.trim().is_empty() {
             reader.add_history(line.clone());
         }

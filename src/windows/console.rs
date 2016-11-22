@@ -26,7 +26,7 @@ use winapi::wincon::{
     self,
     CHAR_INFO, CONSOLE_CURSOR_INFO, CONSOLE_SCREEN_BUFFER_INFO, COORD,
     INPUT_RECORD, KEY_EVENT_RECORD, SMALL_RECT,
-    CTRL_C_EVENT,
+    CTRL_BREAK_EVENT, CTRL_C_EVENT,
     ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_MOUSE_INPUT,
     ENABLE_EXTENDED_FLAGS, ENABLE_QUICK_EDIT_MODE, ENABLE_WINDOW_INPUT,
     ENABLE_PROCESSED_INPUT, ENABLE_WRAP_AT_EOL_OUTPUT,
@@ -34,7 +34,7 @@ use winapi::wincon::{
 };
 
 use chars::ctrl;
-use terminal::{CursorMode, Signal, Size, Terminal};
+use terminal::{CursorMode, Signal, SignalSet, Size, Terminal};
 
 pub struct Console {
     in_handle: HANDLE,
@@ -340,7 +340,8 @@ impl Terminal for Console {
         }
     }
 
-    fn prepare(&self, catch_signals: bool) -> io::Result<ConsoleGuard> {
+    fn prepare(&self, catch_signals: bool, _report_signals: SignalSet)
+            -> io::Result<ConsoleGuard> {
         let in_mode = try!(self.get_mode(self.in_handle));
         let out_mode = try!(self.get_mode(self.out_handle));
 
@@ -521,7 +522,7 @@ static LAST_SIGNAL: AtomicUsize = ATOMIC_USIZE_INIT;
 
 unsafe extern "system" fn ctrl_handler(ctrl_type: DWORD) -> BOOL {
     match ctrl_type {
-        CTRL_C_EVENT => {
+        CTRL_BREAK_EVENT | CTRL_C_EVENT => {
             LAST_SIGNAL.store(ctrl_type as usize, Ordering::Relaxed);
 
             if let Ok(handle) = result_mut_ptr(
@@ -552,6 +553,7 @@ unsafe extern "system" fn ctrl_handler(ctrl_type: DWORD) -> BOOL {
 
 fn conv_signal(sig: DWORD) -> Option<Signal> {
     match sig {
+        CTRL_BREAK_EVENT => Some(Signal::Break),
         CTRL_C_EVENT => Some(Signal::Interrupt),
         _ => None
     }

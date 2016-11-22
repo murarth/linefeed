@@ -6,7 +6,7 @@ use std::env::set_var;
 use std::io;
 use std::rc::Rc;
 
-use linefeed::{Command, Completer, Completion, Reader};
+use linefeed::{Command, Completer, Completion, Reader, ReadResult};
 use linefeed::memory::MemoryTerminal;
 use linefeed::terminal::{Size, Terminal};
 
@@ -54,14 +54,14 @@ fn assert_lines(term: &MemoryTerminal, tests: &[&str]) {
 }
 
 fn assert_read<T: Terminal>(r: &mut Reader<T>, line: &str) {
-    assert_matches!(r.read_line(), Ok(Some(ref s)) if s == line);
+    assert_matches!(r.read_line(), Ok(ReadResult::Input(ref s)) if s == line);
 }
 
 #[test]
 fn test_eof() {
     let (term, mut r) = test("\x04");
 
-    assert_eq!(r.read_line().unwrap(), None);
+    assert_matches!(r.read_line(), Ok(ReadResult::Eof));
 
     term.push_input("foo\x04\n");
     assert_read(&mut r, "foo");
