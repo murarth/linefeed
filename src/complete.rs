@@ -15,7 +15,18 @@ pub struct Completion {
     /// Listing display string; `None` if matches completion
     pub display: Option<String>,
     /// Completion suffix; replaces append character
-    pub suffix: Option<char>,
+    pub suffix: Suffix,
+}
+
+/// Specifies an optional suffix to override the default value
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Suffix {
+    /// Use the default suffix
+    Default,
+    /// Use no suffix
+    None,
+    /// Use the given suffix
+    Some(char),
 }
 
 impl Completion {
@@ -25,7 +36,7 @@ impl Completion {
         Completion{
             completion: s,
             display: None,
-            suffix: None,
+            suffix: Suffix::default(),
         }
     }
 
@@ -34,7 +45,7 @@ impl Completion {
     pub fn completion(&self, def_suffix: Option<char>) -> Cow<str> {
         let mut s = Borrowed(&self.completion[..]);
 
-        if let Some(suffix) = self.suffix.or(def_suffix) {
+        if let Some(suffix) = self.suffix.with_default(def_suffix) {
             s.to_mut().push(suffix);
         }
 
@@ -45,7 +56,7 @@ impl Completion {
     pub fn display(&self) -> Cow<str> {
         let mut s = Borrowed(self.display_str());
 
-        if let Some(suffix) = self.suffix {
+        if let Suffix::Some(suffix) = self.suffix {
             s.to_mut().push(suffix);
         }
 
@@ -63,6 +74,47 @@ impl Completion {
             Some(ref dis) => dis,
             None => &self.completion
         }
+    }
+}
+
+impl Suffix {
+    /// Returns whether the `Suffix` value is the `Default` variant.
+    pub fn is_default(&self) -> bool {
+        match *self {
+            Suffix::Default => true,
+            _ => false
+        }
+    }
+
+    /// Returns whether the `Suffix` value is the `Some(_)` variant.
+    pub fn is_some(&self) -> bool {
+        match *self {
+            Suffix::Some(_) => true,
+            _ => false
+        }
+    }
+
+    /// Returns whether the `Suffix` value is the `None` variant.
+    pub fn is_none(&self) -> bool {
+        match *self {
+            Suffix::None => true,
+            _ => false
+        }
+    }
+
+    /// Returns an `Option<char>`, using the given value in place of `Default`.
+    pub fn with_default(self, default: Option<char>) -> Option<char> {
+        match self {
+            Suffix::None => None,
+            Suffix::Some(ch) => Some(ch),
+            Suffix::Default => default
+        }
+    }
+}
+
+impl Default for Suffix {
+    fn default() -> Suffix {
+        Suffix::Default
     }
 }
 
@@ -148,10 +200,16 @@ pub fn complete_path(path: &str) -> Vec<Completion> {
                         let is_dir = ent.metadata().ok()
                             .map_or(false, |m| m.is_dir());
 
+                        let suffix = if is_dir {
+                            Suffix::Some(MAIN_SEPARATOR)
+                        } else {
+                            Suffix::Default
+                        };
+
                         res.push(Completion{
                             completion: name,
                             display: display,
-                            suffix: if is_dir { Some(MAIN_SEPARATOR) } else { None },
+                            suffix: suffix,
                         });
                     }
                 }

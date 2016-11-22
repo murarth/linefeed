@@ -1201,7 +1201,7 @@ impl<Term: Terminal> Reader<Term> {
     fn substitute_completion(&mut self, compl: &Completion) -> io::Result<()> {
         let mut s = self.completer.quote(&compl.completion);
 
-        if let Some(suffix) = compl.suffix.or(self.completion_append_character) {
+        if let Some(suffix) = compl.suffix.with_default(self.completion_append_character) {
             s.to_mut().push(suffix);
         }
 

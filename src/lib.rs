@@ -28,7 +28,7 @@ extern crate libc;
 #[cfg(test)] #[macro_use] extern crate assert_matches;
 
 pub use command::Command;
-pub use complete::{Completer, Completion};
+pub use complete::{Completer, Completion, Suffix};
 pub use function::Function;
 pub use reader::Reader;
 pub use terminal::{DefaultTerminal, Terminal};
