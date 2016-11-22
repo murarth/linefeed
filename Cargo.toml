@@ -17,7 +17,7 @@ readme = "README.md"
 libc = "0.2"
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.6"
+nix = "0.7"
 
 [target.'cfg(windows)'.dependencies]
 kernel32-sys = "0.2"

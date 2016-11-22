@@ -16,8 +16,7 @@ use nix::Errno;
 use nix::sys::select::{select, FdSet};
 use nix::sys::signal::{
     sigaction,
-    SaFlags, SigAction, SigHandler, SigNum, SigSet,
-    SIGINT, SIGTSTP, SIGQUIT,
+    SaFlags, SigAction, SigHandler, Signal as NixSignal, SigSet,
 };
 use nix::sys::termios::{
     tcgetattr, tcsetattr,
@@ -81,13 +80,13 @@ impl TerminalGuard {
         try!(tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &self.old_tio));
 
         if let Some(ref old_sigint) = self.old_sigint {
-            unsafe { try!(sigaction(SIGINT, old_sigint)); }
+            unsafe { try!(sigaction(NixSignal::SIGINT, old_sigint)); }
         }
         if let Some(ref old_sigtstp) = self.old_sigtstp {
-            unsafe { try!(sigaction(SIGTSTP, old_sigtstp)); }
+            unsafe { try!(sigaction(NixSignal::SIGTSTP, old_sigtstp)); }
         }
         if let Some(ref old_sigquit) = self.old_sigquit {
-            unsafe { try!(sigaction(SIGQUIT, old_sigquit)); }
+            unsafe { try!(sigaction(NixSignal::SIGQUIT, old_sigquit)); }
         }
 
         Ok(())
@@ -266,13 +265,19 @@ impl terminal::Terminal for Terminal {
             let action = SigAction::new(SigHandler::Handler(signal_handler),
                 SaFlags::empty(), SigSet::all());
 
-            guard.old_sigint = Some(unsafe { try!(sigaction(SIGINT, &action)) });
+            guard.old_sigint = Some(unsafe {
+                try!(sigaction(NixSignal::SIGINT, &action))
+            });
 
             if report_signals.contains(Signal::Suspend) {
-                guard.old_sigtstp = Some(unsafe { try!(sigaction(SIGTSTP, &action)) });
+                guard.old_sigtstp = Some(unsafe {
+                    try!(sigaction(NixSignal::SIGTSTP, &action))
+                });
             }
             if report_signals.contains(Signal::Quit) {
-                guard.old_sigquit = Some(unsafe { try!(sigaction(SIGQUIT, &action)) });
+                guard.old_sigquit = Some(unsafe {
+                    try!(sigaction(NixSignal::SIGQUIT, &action))
+                });
             }
         };
 
@@ -354,7 +359,7 @@ fn retry<F, R>(mut f: F) -> io::Result<R>
 
 static LAST_SIGNAL: AtomicUsize = ATOMIC_USIZE_INIT;
 
-extern "C" fn signal_handler(sig: SigNum) {
+extern "C" fn signal_handler(sig: c_int) {
     LAST_SIGNAL.store(sig as usize, Ordering::Relaxed);
 }
 
@@ -370,10 +375,10 @@ fn conv_signal(n: usize) -> Option<Signal> {
     if n == !0 {
         None
     } else {
-        match n as SigNum {
-            SIGINT  => Some(Signal::Interrupt),
-            SIGTSTP => Some(Signal::Suspend),
-            SIGQUIT => Some(Signal::Quit),
+        match NixSignal::from_c_int(n as c_int).ok() {
+            Some(NixSignal::SIGINT)  => Some(Signal::Interrupt),
+            Some(NixSignal::SIGTSTP) => Some(Signal::Suspend),
+            Some(NixSignal::SIGQUIT) => Some(Signal::Quit),
             _ => None
         }
     }
