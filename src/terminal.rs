@@ -51,6 +51,16 @@ impl SignalSet {
     pub fn remove(&mut self, signal: Signal) {
         self.0 &= !signal.as_bit();
     }
+
+    /// Returns the intersection of the two sets.
+    pub fn intersection(&self, other: &SignalSet) -> SignalSet {
+        SignalSet(self.0 & other.0)
+    }
+
+    /// Returns the union of the two sets.
+    pub fn union(&self, other: &SignalSet) -> SignalSet {
+        SignalSet(self.0 | other.0)
+    }
 }
 
 impl Default for SignalSet {

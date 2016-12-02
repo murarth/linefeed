@@ -148,6 +148,7 @@ pub struct Reader<Term: Terminal> {
 
     blink_matching_paren: bool,
     catch_signals: bool,
+    ignore_signals: SignalSet,
     report_signals: SignalSet,
     comment_begin: Cow<'static, str>,
     completion_display_width: usize,
@@ -238,6 +239,7 @@ impl<Term: Terminal> Reader<Term> {
 
             blink_matching_paren: false,
             catch_signals: true,
+            ignore_signals: SignalSet::new(),
             report_signals: SignalSet::new(),
             comment_begin: "#".into(),
             completion_display_width: usize::max_value(),
@@ -262,8 +264,8 @@ impl<Term: Terminal> Reader<Term> {
     ///
     /// Otherwise, user input is returned as `ReadResult::Input(_)`.
     pub fn read_line(&mut self) -> io::Result<ReadResult> {
-        let _guard = try!(self.term.prepare(
-            self.catch_signals, self.report_signals.clone()));
+        let signals = self.report_signals.union(&self.ignore_signals);
+        let _guard = try!(self.term.prepare(self.catch_signals, signals));
         let res = self.read_line_impl();
 
         // Restore normal cursor mode
@@ -283,7 +285,9 @@ impl<Term: Terminal> Reader<Term> {
                 if self.report_signals.contains(sig) {
                     return Ok(ReadResult::Signal(sig));
                 }
-                try!(self.handle_signal(sig));
+                if !self.ignore_signals.contains(sig) {
+                    try!(self.handle_signal(sig));
+                }
             }
 
             let ch = match try!(self.try_read_char(None)) {
@@ -2289,6 +2293,21 @@ impl<Term: Terminal> Reader<Term> {
         self.catch_signals = enabled;
     }
 
+    /// Returns whether the given `Signal` is ignored.
+    pub fn ignore_signal(&self, signal: Signal) -> bool {
+        self.ignore_signals.contains(signal)
+    }
+
+    /// Sets whether the given `Signal` will be ignored.
+    pub fn set_ignore_signal(&mut self, signal: Signal, set: bool) {
+        if set {
+            self.ignore_signals.insert(signal);
+            self.report_signals.remove(signal);
+        } else {
+            self.ignore_signals.remove(signal);
+        }
+    }
+
     /// Returns whether the given `Signal` is to be reported.
     pub fn report_signal(&self, signal: Signal) -> bool {
         self.report_signals.contains(signal)
@@ -2301,6 +2320,7 @@ impl<Term: Terminal> Reader<Term> {
     pub fn set_report_signal(&mut self, signal: Signal, set: bool) {
         if set {
             self.report_signals.insert(signal);
+            self.ignore_signals.remove(signal);
         } else {
             self.report_signals.remove(signal);
         }
