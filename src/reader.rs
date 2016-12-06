@@ -16,7 +16,7 @@ use std::slice;
 use std::str::from_utf8;
 use std::time::Duration;
 
-use chars::{is_ctrl, unctrl, is_printable, DELETE, RUBOUT};
+use chars::{is_ctrl, unctrl, is_printable, DELETE, ESCAPE, RUBOUT};
 use command::{Category, Command};
 use complete::{Completer, Completion, DummyCompleter};
 use function::Function;
@@ -1258,7 +1258,7 @@ impl<Term: Terminal> Reader<Term> {
         let eff_width = min(self.screen_size.columns, self.completion_display_width);
 
         let completions = completions.iter()
-            .map(|compl| display_str(&compl.display(), Display::Normal).into_owned())
+            .map(|compl| display_str(&compl.display(), Display::default()).into_owned())
             .collect::<Vec<_>>();
 
         let cols = format_columns(&completions, eff_width,
@@ -1985,11 +1985,11 @@ impl<Term: Terminal> Reader<Term> {
 
     /// Draws the prompt and current input, assuming the cursor is at column 0
     fn draw_prompt(&self) -> io::Result<()> {
-        try!(self.draw_text(0, &self.prompt_prefix));
+        try!(self.draw_raw_text(&self.prompt_prefix));
 
         match self.prompt_type {
             PromptType::Normal => {
-                try!(self.draw_text(0, &self.prompt_suffix));
+                try!(self.draw_raw_text(&self.prompt_suffix));
             }
             PromptType::Number => {
                 let n = self.input_arg.to_i32();
@@ -2038,11 +2038,28 @@ impl<Term: Terminal> Reader<Term> {
 
     /// Draw some text with the cursor beginning at the given column.
     fn draw_text(&self, start_col: usize, text: &str) -> io::Result<()> {
+        self.draw_text_impl(start_col, text, Display{
+            allow_tab: true,
+            allow_newline: true,
+            .. Display::default()
+        })
+    }
+
+    fn draw_raw_text(&self, text: &str) -> io::Result<()> {
+        self.draw_text_impl(0, text, Display{
+            allow_tab: true,
+            allow_newline: true,
+            allow_escape: true,
+        })
+    }
+
+    fn draw_text_impl(&self, start_col: usize, text: &str, disp: Display)
+            -> io::Result<()> {
         let width = self.screen_size.columns;
         let mut col = start_col;
         let mut out = String::with_capacity(text.len());
 
-        for ch in text.chars().flat_map(|ch| display(ch, Display::ExceptTabAndNewline)) {
+        for ch in text.chars().flat_map(|ch| display(ch, disp)) {
             if ch == '\t' {
                 let n = TAB_STOP - (col % TAB_STOP);
 
@@ -2087,7 +2104,13 @@ impl<Term: Terminal> Reader<Term> {
         let plen = self.prompt_length();
         let mut col = plen;
 
-        for ch in s.chars().flat_map(|ch| display(ch, Display::ExceptTabAndNewline)) {
+        let disp = Display{
+            allow_tab: true,
+            allow_newline: true,
+            .. Display::default()
+        };
+
+        for ch in s.chars().flat_map(|ch| display(ch, disp)) {
             let n = match ch {
                 '\n' => width - (col % width),
                 '\t' => TAB_STOP - (col % TAB_STOP),
@@ -2770,16 +2793,18 @@ impl Iterator for DisplaySequence {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum Display {
-    Normal,
-    ExceptTabAndNewline,
+#[derive(Copy, Clone, Debug, Default)]
+struct Display {
+    allow_tab: bool,
+    allow_newline: bool,
+    allow_escape: bool,
 }
 
 fn display(ch: char, style: Display) -> DisplaySequence {
     match ch {
-        '\t' | '\n' if style == Display::ExceptTabAndNewline =>
-            DisplaySequence::Char(ch),
+        '\t' if style.allow_tab => DisplaySequence::Char(ch),
+        '\n' if style.allow_newline => DisplaySequence::Char(ch),
+        ESCAPE if style.allow_escape => DisplaySequence::Char(ch),
         '\0' => DisplaySequence::Escape('@'),
         RUBOUT => DisplaySequence::Escape('?'),
         ch if is_ctrl(ch) => DisplaySequence::Escape(unctrl(ch)),
@@ -2787,7 +2812,7 @@ fn display(ch: char, style: Display) -> DisplaySequence {
     }
 }
 
-fn display_str(s: &str, style: Display) -> Cow<str> {
+fn display_str<'a>(s: &'a str, style: Display) -> Cow<'a, str> {
     if s.chars().all(|ch| display(ch, style) == DisplaySequence::Char(ch)) {
         Borrowed(s)
     } else {
