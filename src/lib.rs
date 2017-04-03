@@ -19,6 +19,7 @@
 #![deny(missing_docs)]
 
 extern crate libc;
+extern crate unicode_width;
 #[cfg(unix)] extern crate nix;
 #[cfg(windows)] extern crate kernel32;
 #[cfg(windows)] extern crate ole32;

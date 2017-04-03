@@ -15,6 +15,7 @@ readme = "README.md"
 
 [dependencies]
 libc = "0.2"
+unicode-width = "0.1.4"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.7"

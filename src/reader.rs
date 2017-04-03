@@ -1790,8 +1790,9 @@ impl<Term: Terminal> Reader<Term> {
     /// Moves from `old` to `new` cursor position, using the given buffer
     /// as current input.
     fn move_within(&self, old: usize, new: usize, buf: &str) -> io::Result<()> {
-        let (old_line, old_col) = self.line_col_with(old, buf);
-        let (new_line, new_col) = self.line_col_with(new, buf);
+        let prompt_len = self.prompt_length();
+        let (old_line, old_col) = self.line_col_with(old, buf, prompt_len);
+        let (new_line, new_col) = self.line_col_with(new, buf, prompt_len);
 
         self.move_rel(
             new_line as isize - old_line as isize,
@@ -2081,6 +2082,15 @@ impl<Term: Terminal> Reader<Term> {
             } else if ch == '\n' {
                 out.push('\n');
                 col = 0;
+            } else if is_wide(ch) {
+                if col == width - 1 {
+                    out.push_str(" \n");
+                    out.push(ch);
+                    col = 2;
+                } else {
+                    out.push(ch);
+                    col += 2;
+                }
             } else {
                 out.push(ch);
                 col += 1;
@@ -2099,10 +2109,9 @@ impl<Term: Terminal> Reader<Term> {
         self.term.write(&out)
     }
 
-    fn display_size(&self, s: &str) -> usize {
+    fn display_size(&self, s: &str, start_col: usize) -> usize {
         let width = self.screen_size.columns;
-        let plen = self.prompt_length();
-        let mut col = plen;
+        let mut col = start_col;
 
         let disp = Display{
             allow_tab: true,
@@ -2114,13 +2123,21 @@ impl<Term: Terminal> Reader<Term> {
             let n = match ch {
                 '\n' => width - (col % width),
                 '\t' => TAB_STOP - (col % TAB_STOP),
+                ch if is_wide(ch) => {
+                    if col % width == width - 1 {
+                        // Can't render a fullwidth character into last column
+                        3
+                    } else {
+                        2
+                    }
+                }
                 _ => 1
             };
 
             col += n;
         }
 
-        col - plen
+        col - start_col
     }
 
     fn prompt_length(&self) -> usize {
@@ -2131,31 +2148,32 @@ impl<Term: Terminal> Reader<Term> {
                 PROMPT_NUM_PREFIX + PROMPT_NUM_SUFFIX + n
             }
             PromptType::Search => {
-                let n = self.search_buffer.chars().count();
-                let base = n + PROMPT_SEARCH_PREFIX + PROMPT_SEARCH_SUFFIX;
+                let mut prefix = PROMPT_SEARCH_PREFIX;
 
-                match (self.reverse_search, self.search_failed) {
-                    (false, false) => base,
-                    (false, true)  => base + PROMPT_SEARCH_FAILED_PREFIX,
-                    (true,  false) => base + PROMPT_SEARCH_REVERSE_PREFIX,
-                    (true,  true)  => base + PROMPT_SEARCH_REVERSE_PREFIX +
-                        PROMPT_SEARCH_FAILED_PREFIX,
+                if self.reverse_search {
+                    prefix += PROMPT_SEARCH_REVERSE_PREFIX;
                 }
+                if self.search_failed {
+                    prefix += PROMPT_SEARCH_FAILED_PREFIX;
+                }
+
+                let n = self.display_size(&self.search_buffer, prefix);
+                prefix + n + PROMPT_SEARCH_SUFFIX
             }
         }
     }
 
     fn line_col(&self, pos: usize) -> (usize, usize) {
-        self.line_col_with(pos, &self.buffer)
+        self.line_col_with(pos, &self.buffer, self.prompt_length())
     }
 
-    fn line_col_with(&self, pos: usize, buf: &str) -> (usize, usize) {
+    fn line_col_with(&self, pos: usize, buf: &str, start_col: usize) -> (usize, usize) {
         let width = self.screen_size.columns;
         if width == 0 {
             return (0, 0);
         }
 
-        let n = self.prompt_length() + self.display_size(&buf[..pos]);
+        let n = start_col + self.display_size(&buf[..pos], start_col);
 
         (n / width, n % width)
     }
@@ -2818,6 +2836,12 @@ fn display_str<'a>(s: &'a str, style: Display) -> Cow<'a, str> {
     } else {
         Owned(s.chars().flat_map(|ch| display(ch, style)).collect())
     }
+}
+
+fn is_wide(ch: char) -> bool {
+    use unicode_width::UnicodeWidthChar;
+
+    ch.width() == Some(2)
 }
 
 /// Iterator over `Reader` bindings
