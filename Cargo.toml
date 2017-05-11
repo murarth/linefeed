@@ -5,7 +5,7 @@ description = "Interactive terminal input reader"
 authors = ["Murarth <murarth@gmail.com>"]
 version = "0.2.3"
 
-documentation = "http://murarth.github.io/linefeed/linefeed/index.html"
+documentation = "https://docs.rs/linefeed/"
 homepage = "https://github.com/murarth/linefeed"
 repository = "https://github.com/murarth/linefeed"
 
