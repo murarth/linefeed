@@ -515,6 +515,16 @@ impl<Term: Terminal> Reader<Term> {
         HistoryIter(self.history.iter())
     }
 
+    /// Returns the index into history currently being edited.
+    /// If the user is not editing a line of history, `None` is returned.
+    pub fn history_index(&self) -> Option<usize> {
+        if self.history_index == self.history.len() {
+            None
+        } else {
+            Some(self.history_index)
+        }
+    }
+
     /// Returns the current number of history entries.
     pub fn history_len(&self) -> usize {
         self.history.len()
@@ -2856,6 +2866,11 @@ impl<'a> Iterator for BindingIter<'a> {
     }
 
     #[inline]
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.0.nth(n).map(|&(ref s, ref cmd)| (&s[..], cmd))
+    }
+
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.0.size_hint()
     }
@@ -2879,6 +2894,11 @@ impl<'a> Iterator for HistoryIter<'a> {
     #[inline]
     fn next(&mut self) -> Option<&'a str> {
         self.0.next().map(|s| &s[..])
+    }
+
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<&'a str> {
+        self.0.nth(n).map(|s| &s[..])
     }
 
     #[inline]
