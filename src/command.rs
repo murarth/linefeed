@@ -154,6 +154,8 @@ pub enum Category {
     Complete,
     /// Kill command
     Kill,
+    /// Search command
+    Search,
     /// Yank command
     Yank,
     /// Digit argument command
@@ -173,6 +175,7 @@ impl Command {
                 MenuComplete | MenuCompleteBackward => Category::Complete,
             BackwardKillLine | KillLine | BackwardKillWord | KillWord |
                 UnixWordRubout => Category::Kill,
+            ForwardSearchHistory | ReverseSearchHistory => Category::Search,
             Yank | YankPop => Category::Yank,
             _ => Category::Other
         }

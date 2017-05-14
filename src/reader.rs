@@ -123,7 +123,7 @@ pub struct Reader<Term: Terminal> {
     functions: HashMap<Cow<'static, str>, Rc<Function<Term>>>,
 
     history: VecDeque<String>,
-    history_index: usize,
+    history_index: Option<usize>,
     history_size: usize,
 
     /// Configured completer
@@ -220,7 +220,7 @@ impl<Term: Terminal> Reader<Term> {
             functions: HashMap::new(),
 
             history: VecDeque::new(),
-            history_index: 0,
+            history_index: None,
             history_size: MAX_HISTORY,
 
             completer: Rc::new(DummyCompleter),
@@ -353,7 +353,7 @@ impl<Term: Terminal> Reader<Term> {
         self.overwrite_mode = false;
         self.overwritten_append = 0;
         self.overwritten_chars.clear();
-        self.history_index = self.history.len();
+        self.history_index = None;
         self.sequence.clear();
 
         self.prompt_type = PromptType::Normal;
@@ -508,6 +508,7 @@ impl<Term: Terminal> Reader<Term> {
         }
 
         self.history.push_back(line);
+        self.history_index = None;
     }
 
     /// Returns an iterator over history entries
@@ -516,13 +517,10 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     /// Returns the index into history currently being edited.
+    ///
     /// If the user is not editing a line of history, `None` is returned.
     pub fn history_index(&self) -> Option<usize> {
-        if self.history_index == self.history.len() {
-            None
-        } else {
-            Some(self.history_index)
-        }
+        self.history_index
     }
 
     /// Returns the current number of history entries.
@@ -537,7 +535,7 @@ impl<Term: Terminal> Reader<Term> {
     /// If `n` is out of bounds.
     pub fn remove_history(&mut self, n: usize) {
         self.history.remove(n);
-        self.history_index = self.history.len();
+        self.history_index = None;
     }
 
     /// Truncates history to the most recent `n` entries.
@@ -550,28 +548,42 @@ impl<Term: Terminal> Reader<Term> {
             let _ = self.history.drain(..len - n);
         }
 
-        self.history_index = self.history.len();
+        self.history_index = None;
     }
 
     fn next_history(&mut self, n: usize) -> io::Result<()> {
-        let old = self.history_index;
-        let new = min(old + n, self.history.len());
+        if let Some(old) = self.history_index {
+            let new = old.saturating_add(n);
 
-        self.select_history_entry(new)
+            if new >= self.history.len() {
+                try!(self.select_history_entry(None));
+            } else {
+                try!(self.select_history_entry(Some(new)));
+            }
+        }
+
+        Ok(())
     }
 
     fn prev_history(&mut self, n: usize) -> io::Result<()> {
-        let old = self.history_index;
-        let new = old.saturating_sub(n);
+        if !self.history.is_empty() && self.history_index != Some(0) {
+            let new = if let Some(old) = self.history_index {
+                old.saturating_sub(n)
+            } else {
+                self.history.len().saturating_sub(n)
+            };
 
-        self.select_history_entry(new)
+            try!(self.select_history_entry(Some(new)));
+        }
+
+        Ok(())
     }
 
-    /// Sets history entry and redraws buffer.
-    fn select_history_entry(&mut self, new: usize) -> io::Result<()> {
-        let old = self.history_index;
-
-        if old != new {
+    /// Selects the history entry currently being edited by the user.
+    ///
+    /// Setting the entry to `None` will result in editing the input buffer.
+    pub fn select_history_entry(&mut self, new: Option<usize>) -> io::Result<()> {
+        if new != self.history_index {
             try!(self.move_to(0));
             self.set_history_entry(new);
             try!(self.new_buffer());
@@ -581,32 +593,29 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     /// Sets history entry. Performs no screen modification.
-    fn set_history_entry(&mut self, new: usize) {
+    fn set_history_entry(&mut self, new: Option<usize>) {
         let old = self.history_index;
-        let len = self.history.len();
 
         if old != new {
             self.history_index = new;
 
-            if old == len {
-                swap(&mut self.buffer, &mut self.backup_buffer);
+            if let Some(old) = old {
+                self.history[old].clone_from(&self.buffer);
             } else {
-                self.history[old].clear();
-                self.history[old].push_str(&self.buffer);
+                swap(&mut self.buffer, &mut self.backup_buffer);
             }
 
-            if new == len {
-                self.buffer.clear();
-                swap(&mut self.buffer, &mut self.backup_buffer);
+            if let Some(new) = new {
+                self.buffer.clone_from(&self.history[new]);
             } else {
                 self.buffer.clear();
-                self.buffer.push_str(&self.history[new]);
+                swap(&mut self.buffer, &mut self.backup_buffer);
             }
         }
     }
 
     fn get_history(&self, n: usize) -> &str {
-        if n == self.history_index {
+        if self.history_index == Some(n) {
             &self.buffer
         } else if n == self.history.len() {
             &self.backup_buffer
@@ -1081,11 +1090,10 @@ impl<Term: Terminal> Reader<Term> {
                 }
             }
             BeginningOfHistory => {
-                try!(self.select_history_entry(0));
+                try!(self.select_history_entry(Some(0)));
             }
             EndOfHistory => {
-                let n = self.history.len();
-                try!(self.select_history_entry(n));
+                try!(self.select_history_entry(None));
             }
             NextHistory => {
                 if n > 0 {
@@ -1429,7 +1437,7 @@ impl<Term: Terminal> Reader<Term> {
         self.reverse_search = reverse;
         self.search_failed = false;
         self.search_buffer.clear();
-        self.search_index = self.history_index;
+        self.search_index = self.history_index.unwrap_or(self.history.len());
         self.search_pos = self.cursor;
 
         self.redraw_prompt(PromptType::Search)
@@ -1441,7 +1449,7 @@ impl<Term: Terminal> Reader<Term> {
 
     fn end_search_history(&mut self) -> io::Result<()> {
         let n = self.search_index;
-        self.set_history_entry(n);
+        self.set_history_entry(Some(n));
         self.cursor = self.search_pos;
         self.redraw_prompt(PromptType::Normal)
     }
