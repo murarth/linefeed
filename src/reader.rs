@@ -111,10 +111,12 @@ pub struct Reader<Term: Terminal> {
     search_failed: bool,
     /// Current search string
     search_buffer: String,
+    /// Last search string
+    last_search: String,
     /// Current matching history entry
-    search_index: usize,
+    search_index: Option<usize>,
     /// Position within entry of first match
-    search_pos: usize,
+    search_pos: Option<usize>,
 
     /// Terminal size as of last draw operation
     screen_size: Size,
@@ -211,8 +213,9 @@ impl<Term: Terminal> Reader<Term> {
             reverse_search: false,
             search_failed: false,
             search_buffer: String::new(),
-            search_index: 0,
-            search_pos: 0,
+            last_search: String::new(),
+            search_index: None,
+            search_pos: None,
 
             screen_size: Size{lines: 0, columns: 0},
 
@@ -319,7 +322,8 @@ impl<Term: Terminal> Reader<Term> {
                 PromptType::Search => {
                     if ch == DELETE {
                         self.search_buffer.pop();
-                        try!(self.search_history_step());
+                        self.last_search.clone_from(&self.search_buffer);
+                        try!(self.search_history_update());
                     } else if self.is_abort(ch) {
                         try!(self.abort_search_history());
                     } else if is_ctrl(ch) {
@@ -328,7 +332,8 @@ impl<Term: Terminal> Reader<Term> {
                         self.macro_buffer.insert(0, ch);
                     } else {
                         self.search_buffer.push(ch);
-                        try!(self.search_history_step());
+                        self.last_search.clone_from(&self.search_buffer);
+                        try!(self.search_history_update());
                     }
                 }
             }
@@ -614,13 +619,13 @@ impl<Term: Terminal> Reader<Term> {
         }
     }
 
-    fn get_history(&self, n: usize) -> &str {
-        if self.history_index == Some(n) {
+    fn get_history(&self, n: Option<usize>) -> &str {
+        if self.history_index == n {
             &self.buffer
-        } else if n == self.history.len() {
-            &self.backup_buffer
-        } else {
+        } else if let Some(n) = n {
             &self.history[n]
+        } else {
+            &self.backup_buffer
         }
     }
 
@@ -1110,10 +1115,18 @@ impl<Term: Terminal> Reader<Term> {
                 }
             }
             ForwardSearchHistory => {
-                try!(self.start_search_history(false));
+                if self.last_cmd == Category::Search {
+                    try!(self.continue_search_history(false));
+                } else {
+                    try!(self.start_search_history(false));
+                }
             }
             ReverseSearchHistory => {
-                try!(self.start_search_history(true));
+                if self.last_cmd == Category::Search {
+                    try!(self.continue_search_history(true));
+                } else {
+                    try!(self.start_search_history(true));
+                }
             }
             QuotedInsert => {
                 let ch = {
@@ -1437,10 +1450,20 @@ impl<Term: Terminal> Reader<Term> {
         self.reverse_search = reverse;
         self.search_failed = false;
         self.search_buffer.clear();
-        self.search_index = self.history_index.unwrap_or(self.history.len());
-        self.search_pos = self.cursor;
+        self.search_index = self.history_index;
+        self.search_pos = Some(self.cursor);
 
         self.redraw_prompt(PromptType::Search)
+    }
+
+    fn continue_search_history(&mut self, reverse: bool) -> io::Result<()> {
+        self.reverse_search = reverse;
+        self.search_failed = false;
+        self.search_buffer.clone_from(&self.last_search);
+        self.search_index = self.history_index;
+        self.search_pos = Some(self.cursor);
+
+        self.search_history_step()
     }
 
     fn abort_search_history(&mut self) -> io::Result<()> {
@@ -1448,24 +1471,16 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     fn end_search_history(&mut self) -> io::Result<()> {
-        let n = self.search_index;
-        self.set_history_entry(Some(n));
-        self.cursor = self.search_pos;
+        let new = self.search_index;
+        self.set_history_entry(new);
+        if let Some(pos) = self.search_pos {
+            self.cursor = pos;
+        }
         self.redraw_prompt(PromptType::Normal)
     }
 
-    fn search_history_step(&mut self) -> io::Result<()> {
-        if self.search_buffer.is_empty() {
-            return self.redraw_prompt(PromptType::Search);
-        }
-
-        // Search for the next match
-        let next_match = if self.reverse_search {
-            self.search_history_backward(&self.search_buffer)
-        } else {
-            self.search_history_forward(&self.search_buffer)
-        };
-
+    fn show_search_match(&mut self, next_match: Option<(Option<usize>, Option<usize>)>)
+            -> io::Result<()> {
         if let Some((idx, pos)) = next_match {
             self.search_failed = false;
             self.search_index = idx;
@@ -1477,33 +1492,68 @@ impl<Term: Terminal> Reader<Term> {
         self.redraw_prompt(PromptType::Search)
     }
 
-    fn search_history_backward(&self, s: &str) -> Option<(usize, usize)> {
+    fn search_history_update(&mut self) -> io::Result<()> {
+        // Search for the next match, perhaps including the current position
+        let next_match = if self.reverse_search {
+            self.search_history_backward(&self.search_buffer, true)
+        } else {
+            self.search_history_forward(&self.search_buffer, true)
+        };
+
+        self.show_search_match(next_match)
+    }
+
+    fn search_history_step(&mut self) -> io::Result<()> {
+        if self.search_buffer.is_empty() {
+            return self.redraw_prompt(PromptType::Search);
+        }
+
+        // Search for the next match
+        let next_match = if self.reverse_search {
+            self.search_history_backward(&self.search_buffer, false)
+        } else {
+            self.search_history_forward(&self.search_buffer, false)
+        };
+
+        self.show_search_match(next_match)
+    }
+
+    fn search_history_backward(&self, s: &str, include_cur: bool)
+            -> Option<(Option<usize>, Option<usize>)> {
         let mut idx = self.search_index;
         let mut pos = self.search_pos;
 
-        // Let the first search include the current match
-        if self.get_history(idx).is_char_boundary(pos + s.len()) {
-            pos += s.len();
+        if include_cur && !self.search_failed {
+            if let Some(p) = pos {
+                if self.get_history(idx).is_char_boundary(p + s.len()) {
+                    pos = Some(p + s.len());
+                }
+            }
         }
 
         loop {
             let line = self.get_history(idx);
 
-            if pos == usize::max_value() {
-                pos = line.len();
-            }
-
-            match line[..pos].rfind(s) {
+            match line[..pos.unwrap_or(line.len())].rfind(s) {
                 Some(found) => {
-                    pos = found;
+                    pos = Some(found);
                     break;
                 }
                 None => {
-                    if idx == 0 {
-                        return None;
+                    match idx {
+                        Some(0) => return None,
+                        Some(n) => {
+                            idx = Some(n - 1);
+                        }
+                        None => {
+                            if self.history.is_empty() {
+                                return None;
+                            } else {
+                                idx = Some(self.history.len() - 1);
+                                pos = None;
+                            }
+                        }
                     }
-                    idx -= 1;
-                    pos = usize::max_value();
                 }
             }
         }
@@ -1511,24 +1561,36 @@ impl<Term: Terminal> Reader<Term> {
         Some((idx, pos))
     }
 
-    fn search_history_forward(&self, s: &str) -> Option<(usize, usize)> {
+    fn search_history_forward(&self, s: &str, include_cur: bool)
+            -> Option<(Option<usize>, Option<usize>)> {
         let mut idx = self.search_index;
         let mut pos = self.search_pos;
+
+        if !include_cur {
+            if let Some(p) = pos {
+                pos = Some(forward_char(1, self.get_history(idx), p));
+            }
+        }
 
         loop {
             let line = self.get_history(idx);
 
-            match line[pos..].find(s) {
+            match line[pos.unwrap_or(0)..].find(s) {
                 Some(found) => {
-                    pos = found;
+                    pos = pos.map(|n| n + found).or(Some(found));
                     break;
                 }
                 None => {
-                    if idx == self.history.len() {
+                    if let Some(n) = idx {
+                        if n + 1 == self.history.len() {
+                            idx = None;
+                        } else {
+                            idx = Some(n + 1);
+                        }
+                        pos = None;
+                    } else {
                         return None;
                     }
-                    idx += 1;
-                    pos = 0;
                 }
             }
         }
@@ -2027,7 +2089,8 @@ impl<Term: Terminal> Reader<Term> {
                 let s = format!("{}`{}': {}", pre, self.search_buffer, ent);
 
                 try!(self.draw_text(0, &s));
-                return self.move_within(ent.len(), self.search_pos, ent);
+                return self.move_within(ent.len(),
+                    self.search_pos.unwrap_or(self.cursor), ent);
             }
         }
 
