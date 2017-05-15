@@ -1467,6 +1467,7 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     fn abort_search_history(&mut self) -> io::Result<()> {
+        self.last_cmd = Category::Other;
         self.redraw_prompt(PromptType::Normal)
     }
 
@@ -1544,6 +1545,7 @@ impl<Term: Terminal> Reader<Term> {
                         Some(0) => return None,
                         Some(n) => {
                             idx = Some(n - 1);
+                            pos = None;
                         }
                         None => {
                             if self.history.is_empty() {
