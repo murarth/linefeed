@@ -380,6 +380,14 @@ impl<Term: Terminal> Reader<Term> {
         &self.buffer
     }
 
+    /// Returns the "backup" buffer.
+    ///
+    /// When the user is currently editing a history entry, the backup buffer
+    /// contains the original user input.
+    pub fn backup_buffer(&self) -> &str {
+        &self.backup_buffer
+    }
+
     /// Sets the buffer to the given value.
     /// The cursor is moved to the end of the buffer.
     pub fn set_buffer(&mut self, buf: &str) -> io::Result<()> {
