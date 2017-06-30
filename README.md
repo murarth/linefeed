@@ -3,7 +3,7 @@
 `linefeed` is a configurable, extensible, interactive input reader
 for Unix terminals and Windows console.
 
-[API Documentation](https://murarth.github.io/linefeed/linefeed/index.html)
+[API Documentation](https://docs.rs/linefeed/)
 
 `linefeed` follows the paradigm of GNU Readline, binding key sequences to
 commands that modify input state. `linefeed` supports many GNU Readline commands.
