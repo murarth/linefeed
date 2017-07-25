@@ -3034,7 +3034,9 @@ fn default_bindings<Term: Terminal>(term: &Term) -> Vec<(Cow<'static, str>, Comm
 
         // Basic commands
         ("\x01"    .into(), BeginningOfLine),           // Ctrl-A
+        ("\x02"    .into(), BackwardChar),              // Ctrl-B
         ("\x05"    .into(), EndOfLine),                 // Ctrl-E
+        ("\x06"    .into(), ForwardChar),               // Ctrl-F
         ("\x07"    .into(), Abort),                     // Ctrl-G
         ("\x0b"    .into(), KillLine),                  // Ctrl-K
         ("\x0c"    .into(), ClearScreen),               // Ctrl-L
