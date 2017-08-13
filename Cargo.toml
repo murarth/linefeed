@@ -9,9 +9,13 @@ documentation = "https://docs.rs/linefeed/"
 homepage = "https://github.com/murarth/linefeed"
 repository = "https://github.com/murarth/linefeed"
 
+categories = ["command-line-interface"]
 keywords = ["console", "terminal", "input", "readline"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
+
+[badges]
+travis-ci = { repository = "murarth/linefeed" }
 
 [dependencies]
 libc = "0.2"
