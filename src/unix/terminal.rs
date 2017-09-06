@@ -395,7 +395,10 @@ struct Winsize {
 fn get_winsize(fd: c_int) -> io::Result<Winsize> {
     let mut winsz: Winsize = unsafe { zeroed() };
 
-    let res = unsafe { ioctl(fd, TIOCGWINSZ, &mut winsz) };
+    // NOTE: this ".into()" is added as a temporary fix to a libc
+    // bug described in:
+    //  https://github.com/rust-lang/libc/pull/704
+    let res = unsafe { ioctl(fd, TIOCGWINSZ.into(), &mut winsz) };
 
     if res == -1 {
         Err(io::Error::last_os_error())
