@@ -2158,7 +2158,7 @@ impl<Term: Terminal> Reader<Term> {
                 if col + n > width {
                     let pre = width - col;
                     out.extend(repeat(' ').take(pre));
-                    out.push('\n');
+                    out.push_str(" \r");
                     out.extend(repeat(' ').take(n - pre));
                     col = n - pre;
                 } else {
@@ -2166,7 +2166,7 @@ impl<Term: Terminal> Reader<Term> {
                     col += n;
 
                     if col == width {
-                        out.push('\n');
+                        out.push_str(" \r");
                         col = 0;
                     }
                 }
@@ -2175,7 +2175,7 @@ impl<Term: Terminal> Reader<Term> {
                 col = 0;
             } else if is_wide(ch) {
                 if col == width - 1 {
-                    out.push_str(" \n");
+                    out.push_str("  \r");
                     out.push(ch);
                     col = 2;
                 } else {
@@ -2187,14 +2187,16 @@ impl<Term: Terminal> Reader<Term> {
                 col += 1;
 
                 if col == width {
-                    out.push('\n');
+                    // Space pushes the cursor to the next line,
+                    // CR brings back to the start of the line.
+                    out.push_str(" \r");
                     col = 0;
                 }
             }
         }
 
         if col == width {
-            out.push('\n');
+            out.push_str(" \r");
         }
 
         self.term.write(&out)

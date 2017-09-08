@@ -29,7 +29,7 @@ use winapi::wincon::{
     CTRL_BREAK_EVENT, CTRL_C_EVENT,
     ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_MOUSE_INPUT,
     ENABLE_EXTENDED_FLAGS, ENABLE_QUICK_EDIT_MODE, ENABLE_WINDOW_INPUT,
-    ENABLE_PROCESSED_INPUT, ENABLE_WRAP_AT_EOL_OUTPUT,
+    ENABLE_PROCESSED_INPUT,
     KEY_EVENT,
 };
 
@@ -360,10 +360,6 @@ impl Terminal for Console {
 
         guard.in_handle = self.in_handle;
         guard.old_in_mode = in_mode;
-
-        try!(self.set_mode(self.out_handle, out_mode &
-                !ENABLE_WRAP_AT_EOL_OUTPUT));
-
         guard.out_handle = self.out_handle;
         guard.old_out_mode = out_mode;
 
