@@ -427,18 +427,17 @@ impl<Term: Terminal> Reader<Term> {
         match prompt.rfind('\n') {
             Some(pos) => {
                 let (pre, _) = filter_visible(&prompt[..pos + 1]);
-                self.prompt_prefix = pre.to_owned();
+                self.prompt_prefix = pre;
 
-                let (suf, n) = filter_visible(&prompt[pos..]);
-                self.prompt_suffix = suf.to_owned();
-
-                self.prompt_suffix_length = n;
+                let (suf, suf_virt) = filter_visible(&prompt[pos..]);
+                self.prompt_suffix = suf;
+                self.prompt_suffix_length = self.display_size(&suf_virt, 0);
             }
             None => {
                 self.prompt_prefix.clear();
-                let (suf, n) = filter_visible(prompt);
-                self.prompt_suffix = suf.to_owned();
-                self.prompt_suffix_length = n;
+                let (suf, suf_virt) = filter_visible(prompt);
+                self.prompt_suffix = suf;
+                self.prompt_suffix_length = self.display_size(&suf_virt, 0);
             }
         }
     }
@@ -2004,10 +2003,25 @@ impl<Term: Terminal> Reader<Term> {
 
     /// Insert a string at the current cursor position.
     pub fn insert_str(&mut self, s: &str) -> io::Result<()> {
+        // If the string insertion moves a combining character,
+        // we must redraw starting from the character before the cursor.
+        let moves_combining = match self.buffer[self.cursor..].chars().next() {
+            Some(ch) if is_combining(ch) => true,
+            _ => false
+        };
+
         self.buffer.insert_str(self.cursor, s);
 
-        try!(self.draw_buffer(self.cursor));
-        self.cursor += s.len();
+        if moves_combining && self.cursor != 0 {
+            let pos = backward_char(1, &self.buffer, self.cursor);
+            // Move without updating the cursor
+            try!(self.move_within(self.cursor, pos, &self.buffer));
+            try!(self.draw_buffer(pos));
+            self.cursor += s.len();
+        } else {
+            try!(self.draw_buffer(self.cursor));
+            self.cursor += s.len();
+        }
 
         self.move_from(self.buffer.len())
     }
@@ -2172,6 +2186,8 @@ impl<Term: Terminal> Reader<Term> {
             } else if ch == '\n' {
                 out.push('\n');
                 col = 0;
+            } else if is_combining(ch) {
+                out.push(ch);
             } else if is_wide(ch) {
                 if col == width - 1 {
                     out.push_str("  \r");
@@ -2215,6 +2231,7 @@ impl<Term: Terminal> Reader<Term> {
             let n = match ch {
                 '\n' => width - (col % width),
                 '\t' => TAB_STOP - (col % TAB_STOP),
+                ch if is_combining(ch) => 0,
                 ch if is_wide(ch) => {
                     if col % width == width - 1 {
                         // Can't render a fullwidth character into last column
@@ -2795,9 +2812,9 @@ enum BindResult {
     NotFound,
 }
 
-fn filter_visible(s: &str) -> (String, usize) {
-    let mut res = String::new();
-    let mut n = 0;
+fn filter_visible(s: &str) -> (String, String) {
+    let mut real = String::new();
+    let mut virt = String::new();
     let mut ignore = false;
 
     for ch in s.chars() {
@@ -2806,14 +2823,15 @@ fn filter_visible(s: &str) -> (String, usize) {
         } else if ch == END_INVISIBLE {
             ignore = false;
         } else {
+            real.push(ch);
+
             if !ignore {
-                n += 1;
+                virt.push(ch);
             }
-            res.push(ch);
         }
     }
 
-    (res, n)
+    (real, virt)
 }
 
 fn parse_bool(s: &str) -> Option<bool> {
@@ -2928,6 +2946,12 @@ fn display_str<'a>(s: &'a str, style: Display) -> Cow<'a, str> {
     } else {
         Owned(s.chars().flat_map(|ch| display(ch, style)).collect())
     }
+}
+
+fn is_combining(ch: char) -> bool {
+    use unicode_normalization::char::is_combining_mark;
+
+    is_combining_mark(ch)
 }
 
 fn is_wide(ch: char) -> bool {
@@ -3080,7 +3104,8 @@ fn default_bindings<Term: Terminal>(term: &Term) -> Vec<(Cow<'static, str>, Comm
 }
 
 fn backward_char(n: usize, s: &str, cur: usize) -> usize {
-    let mut chars = s[..cur].char_indices();
+    let mut chars = s[..cur].char_indices()
+        .filter(|&(_, ch)| !is_combining(ch));
     let mut res = cur;
 
     for _ in 0..n {
@@ -3094,7 +3119,8 @@ fn backward_char(n: usize, s: &str, cur: usize) -> usize {
 }
 
 fn forward_char(n: usize, s: &str, cur: usize) -> usize {
-    let mut chars = s[cur..].char_indices();
+    let mut chars = s[cur..].char_indices()
+        .filter(|&(_, ch)| !is_combining(ch));
 
     for _ in 0..n {
         match chars.next() {

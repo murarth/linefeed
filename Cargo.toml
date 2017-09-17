@@ -19,6 +19,7 @@ travis-ci = { repository = "murarth/linefeed" }
 
 [dependencies]
 libc = "0.2"
+unicode-normalization = "0.1.5"
 unicode-width = "0.1.4"
 
 [target.'cfg(unix)'.dependencies]
