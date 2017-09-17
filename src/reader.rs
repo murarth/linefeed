@@ -10,7 +10,6 @@ use std::iter::repeat;
 use std::mem::{replace, swap};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::ptr;
 use std::rc::Rc;
 use std::slice;
 use std::str::from_utf8;
@@ -1718,7 +1717,7 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     fn queue_input(&mut self, seq: &str) {
-        insert_str(&mut self.macro_buffer, 0, seq);
+        self.macro_buffer.insert_str(0, seq);
     }
 
     fn backward_char(&mut self, n: usize) -> io::Result<()> {
@@ -1815,7 +1814,7 @@ impl<Term: Terminal> Reader<Term> {
 
     fn prepend_kill_ring(&mut self, s: String) {
         if let Some(kill) = self.kill_ring.front_mut() {
-            insert_str(kill, 0, &s);
+            kill.insert_str(0, &s);
             return;
         }
         self.kill_ring.push_front(s);
@@ -1851,10 +1850,10 @@ impl<Term: Terminal> Reader<Term> {
         let b = self.buffer[right.clone()].to_owned();
 
         let _ = self.buffer.drain(right.clone());
-        insert_str(&mut self.buffer, right.start, &a);
+        self.buffer.insert_str(right.start, &a);
 
         let _ = self.buffer.drain(left.clone());
-        insert_str(&mut self.buffer, left.start, &b);
+        self.buffer.insert_str(left.start, &b);
 
         try!(self.draw_buffer(self.cursor));
         try!(self.term.clear_to_screen_end());
@@ -2005,7 +2004,7 @@ impl<Term: Terminal> Reader<Term> {
 
     /// Insert a string at the current cursor position.
     pub fn insert_str(&mut self, s: &str) -> io::Result<()> {
-        insert_str(&mut self.buffer, self.cursor, s);
+        self.buffer.insert_str(self.cursor, s);
 
         try!(self.draw_buffer(self.cursor));
         self.cursor += s.len();
@@ -2040,7 +2039,7 @@ impl<Term: Terminal> Reader<Term> {
         try!(self.move_to(start));
 
         let _ = self.buffer.drain(start..end);
-        insert_str(&mut self.buffer, self.cursor, s);
+        self.buffer.insert_str(self.cursor, s);
 
         try!(self.draw_buffer(self.cursor));
         self.term.clear_to_screen_end()
@@ -3078,48 +3077,6 @@ fn default_bindings<Term: Terminal>(term: &Term) -> Vec<(Cow<'static, str>, Comm
         ("\x1b8".into(), DigitArgument),    // Escape, 8
         ("\x1b9".into(), DigitArgument),    // Escape, 9
     ]
-}
-
-// XXX: Waiting for stabilization of `String::insert_str`.
-fn insert_str(string: &mut String, idx: usize, s: &str) {
-    let len = string.len();
-    let amt = s.len();
-    let bytes = s.as_bytes();
-
-    assert!(idx <= len);
-    assert!(string.is_char_boundary(idx));
-
-    unsafe {
-        let mut buf = string.as_mut_vec();
-
-        buf.reserve(amt);
-
-        ptr::copy(buf.as_ptr().offset(idx as isize),
-            buf.as_mut_ptr().offset((idx + amt) as isize),
-            len - idx);
-
-        ptr::copy(bytes.as_ptr(),
-            buf.as_mut_ptr().offset(idx as isize),
-            amt);
-
-        buf.set_len(len + amt);
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn test_insert_str() {
-    let mut s = String::from("bar");
-    insert_str(&mut s, 0, "foo");
-    assert_eq!(s, "foobar");
-
-    let mut s = String::from("foo");
-    insert_str(&mut s, 3, "bar");
-    assert_eq!(s, "foobar");
-
-    let mut s = String::from("far");
-    insert_str(&mut s, 1, "oob");
-    assert_eq!(s, "foobar");
 }
 
 fn backward_char(n: usize, s: &str, cur: usize) -> usize {
