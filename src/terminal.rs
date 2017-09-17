@@ -19,6 +19,8 @@ pub enum CursorMode {
 pub enum Signal {
     /// Break signal (`SIGBREAK`); Windows only
     Break,
+    /// Continue signal (`SIGCONT`); Unix only
+    Continue,
     /// Interrupt signal (`SIGINT`)
     Interrupt,
     /// Suspend signal (`SIGTSTP`); Unix only

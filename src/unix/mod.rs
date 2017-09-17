@@ -1,6 +1,6 @@
 //! Unix platform support
 
-pub use self::terminal::Terminal;
+pub use self::terminal::UnixTerminal as Terminal;
 
 pub mod path;
 mod terminal;

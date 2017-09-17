@@ -1,7 +1,8 @@
+use std::cell::Cell;
 use std::env::var;
 use std::ffi::CStr;
 use std::io::{self, stdout, stderr, Write};
-use std::mem::zeroed;
+use std::mem::{forget, zeroed};
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use std::time::Duration;
 
@@ -27,9 +28,9 @@ use nix::sys::termios::{
 use nix::sys::time::TimeVal;
 
 use sys::terminfo::{setup_term, get_str, put, term_param};
-use terminal::{self, CursorMode, Signal, SignalSet, Size};
+use terminal::{CursorMode, Signal, SignalSet, Size, Terminal};
 
-pub struct Terminal {
+pub struct UnixTerminal {
     /// Terminal name
     name: Option<String>,
 
@@ -56,11 +57,16 @@ pub struct Terminal {
     cursor_left_n: &'static CStr,
     cursor_right: &'static CStr,
     cursor_right_n: &'static CStr,
+
+    /// If SIGCONT is received,
+    /// resume prepared terminal session using these parameters.
+    resume: Cell<Option<(bool, SignalSet)>>,
 }
 
 #[must_use]
 pub struct TerminalGuard {
     old_tio: Termios,
+    old_sigcont: Option<SigAction>,
     old_sigint: Option<SigAction>,
     old_sigtstp: Option<SigAction>,
     old_sigquit: Option<SigAction>,
@@ -70,6 +76,7 @@ impl TerminalGuard {
     fn new(old_tio: Termios) -> TerminalGuard {
         TerminalGuard{
             old_tio: old_tio,
+            old_sigcont: None,
             old_sigint: None,
             old_sigtstp: None,
             old_sigquit: None,
@@ -79,6 +86,9 @@ impl TerminalGuard {
     fn restore(&self) -> io::Result<()> {
         try!(tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &self.old_tio));
 
+        if let Some(ref old_sigcont) = self.old_sigcont {
+            unsafe { try!(sigaction(NixSignal::SIGCONT, old_sigcont)); }
+        }
         if let Some(ref old_sigint) = self.old_sigint {
             unsafe { try!(sigaction(NixSignal::SIGINT, old_sigint)); }
         }
@@ -101,15 +111,15 @@ impl Drop for TerminalGuard {
     }
 }
 
-impl terminal::Terminal for Terminal {
+impl Terminal for UnixTerminal {
     type PrepareGuard = TerminalGuard;
 
-    fn new() -> io::Result<Terminal> {
+    fn new() -> io::Result<UnixTerminal> {
         let tio = try!(tcgetattr(STDIN_FILENO));
 
         try!(setup_term());
 
-        Ok(Terminal{
+        Ok(UnixTerminal{
             name: var("TERM").ok(),
 
             eof: tio.c_cc[VEOF],
@@ -130,6 +140,8 @@ impl terminal::Terminal for Terminal {
             cursor_left_n: try!(get_str("cub")),
             cursor_right: try!(get_str("cuf1")),
             cursor_right_n: try!(get_str("cuf")),
+
+            resume: Cell::new(None),
         })
     }
 
@@ -236,8 +248,13 @@ impl terminal::Terminal for Terminal {
                     Some(&mut r_fds), None, Some(&mut e_fds), timeout.as_mut()) {
                 Ok(n) => return Ok(n == 1),
                 Err(ref e) if e.errno() == Errno::EINTR => {
-                    if get_last_signal().is_some() {
-                        return Ok(true);
+                    match get_last_signal() {
+                        Some(Signal::Continue) => {
+                            self.resume();
+                            return Ok(true);
+                        }
+                        Some(_) => return Ok(true),
+                        _ => ()
                     }
                 }
                 Err(e) => return Err(e.into())
@@ -265,6 +282,9 @@ impl terminal::Terminal for Terminal {
             let action = SigAction::new(SigHandler::Handler(signal_handler),
                 SaFlags::empty(), SigSet::all());
 
+            guard.old_sigcont = Some(unsafe {
+                try!(sigaction(NixSignal::SIGCONT, &action))
+            });
             guard.old_sigint = Some(unsafe {
                 try!(sigaction(NixSignal::SIGINT, &action))
             });
@@ -280,6 +300,8 @@ impl terminal::Terminal for Terminal {
                 });
             }
         };
+
+        self.resume.set(Some((catch_signals, report_signals.clone())));
 
         Ok(guard)
     }
@@ -333,6 +355,21 @@ impl terminal::Terminal for Terminal {
     }
 }
 
+impl UnixTerminal {
+    fn resume(&self) {
+        if let Some((catch_signals, report_signals)) = self.resume.take() {
+            // prepare will reset this, but we want the Reader to see it.
+            let sig = get_raw_signal();
+
+            if let Ok(guard) = self.prepare(catch_signals, report_signals.clone()) {
+                set_raw_signal(sig);
+                forget(guard);
+            }
+            self.resume.set(Some((catch_signals, report_signals)));
+        }
+    }
+}
+
 fn read_stdin(buf: &mut [u8]) -> io::Result<usize> {
     retry(|| {
         let res = unsafe { read(STDIN_FILENO,
@@ -360,11 +397,19 @@ fn retry<F, R>(mut f: F) -> io::Result<R>
 static LAST_SIGNAL: AtomicUsize = ATOMIC_USIZE_INIT;
 
 extern "C" fn signal_handler(sig: c_int) {
-    LAST_SIGNAL.store(sig as usize, Ordering::Relaxed);
+    set_raw_signal(sig as usize);
+}
+
+fn get_raw_signal() -> usize {
+    LAST_SIGNAL.load(Ordering::Relaxed)
+}
+
+fn set_raw_signal(sig: usize) {
+    LAST_SIGNAL.store(sig, Ordering::Relaxed);
 }
 
 fn get_last_signal() -> Option<Signal> {
-    conv_signal(LAST_SIGNAL.load(Ordering::Relaxed))
+    conv_signal(get_raw_signal())
 }
 
 fn take_last_signal() -> Option<Signal> {
@@ -376,6 +421,7 @@ fn conv_signal(n: usize) -> Option<Signal> {
         None
     } else {
         match NixSignal::from_c_int(n as c_int).ok() {
+            Some(NixSignal::SIGCONT) => Some(Signal::Continue),
             Some(NixSignal::SIGINT)  => Some(Signal::Interrupt),
             Some(NixSignal::SIGTSTP) => Some(Signal::Suspend),
             Some(NixSignal::SIGQUIT) => Some(Signal::Quit),

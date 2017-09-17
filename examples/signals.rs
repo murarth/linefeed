@@ -9,6 +9,7 @@ fn main() {
 
     // Report all signals to application
     reader.set_report_signal(Signal::Break, true);
+    reader.set_report_signal(Signal::Continue, true);
     reader.set_report_signal(Signal::Interrupt, true);
     reader.set_report_signal(Signal::Suspend, true);
     reader.set_report_signal(Signal::Quit, true);
@@ -23,6 +24,16 @@ fn main() {
                 let mut words = line.split_whitespace();
 
                 match words.next() {
+                    Some("help") => {
+                        println!("linefeed signals demo commands:");
+                        println!();
+                        println!("  show            - Show which signals are ignored or reported");
+                        println!("  report <sig>    - Start reporting a signal");
+                        println!("  -report <sig>   - Stop reporting a signal");
+                        println!("  ignore <sig>    - Start ignoring a signal");
+                        println!("  -ignore <sig>   - Stop ignoring a signal");
+                        println!();
+                    }
                     Some("show") => {
                         for &sig in SIGNALS {
                             if reader.ignore_signal(sig) {
@@ -76,12 +87,18 @@ fn main() {
     }
 }
 
-const SIGNALS: &'static [Signal] =
-    &[Signal::Break, Signal::Interrupt, Signal::Suspend, Signal::Quit];
+const SIGNALS: &'static [Signal] = &[
+    Signal::Break,
+    Signal::Continue,
+    Signal::Interrupt,
+    Signal::Suspend,
+    Signal::Quit,
+];
 
 fn signal_by_name(name: &str) -> Option<Signal> {
     match name {
         "break" => Some(Signal::Break),
+        "cont" | "continue" => Some(Signal::Continue),
         "int" | "interrupt" => Some(Signal::Interrupt),
         "sus" | "suspend" => Some(Signal::Suspend),
         "quit" => Some(Signal::Quit),

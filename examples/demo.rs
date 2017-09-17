@@ -30,11 +30,11 @@ fn main() {
         match cmd {
             "help" => {
                 println!("linefeed demo commands:");
-                println!("");
+                println!();
                 for &(cmd, help) in DEMO_COMMANDS {
                     println!("  {:15} - {}", cmd, help);
                 }
-                println!("");
+                println!();
             }
             "bind" => {
                 let d = parse_text("<input>", args);

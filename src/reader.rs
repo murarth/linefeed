@@ -1608,6 +1608,9 @@ impl<Term: Terminal> Reader<Term> {
 
     fn handle_signal(&mut self, signal: Signal) -> io::Result<()> {
         match signal {
+            Signal::Continue => {
+                try!(self.draw_prompt());
+            }
             Signal::Interrupt => {
                 if self.echo_control_characters {
                     try!(self.term.write("^C"));
