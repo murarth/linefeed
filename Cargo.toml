@@ -33,3 +33,4 @@ winapi = "0.2"
 
 [dev-dependencies]
 assert_matches = "1.0"
+rand = "0.3"

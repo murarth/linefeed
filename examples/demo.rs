@@ -1,6 +1,9 @@
 extern crate linefeed;
+extern crate rand;
 
 use std::rc::Rc;
+use std::thread;
+use std::time::Duration;
 
 use linefeed::{Reader, ReadResult};
 use linefeed::chars::escape_sequence;
@@ -8,6 +11,7 @@ use linefeed::command::COMMANDS;
 use linefeed::complete::{Completer, Completion};
 use linefeed::inputrc::parse_text;
 use linefeed::terminal::Terminal;
+use rand::{Rng, weak_rng};
 
 fn main() {
     let mut reader = Reader::new("demo").unwrap();
@@ -20,6 +24,7 @@ fn main() {
     reader.set_completer(Rc::new(DemoCompleter));
     reader.set_prompt("demo> ");
 
+    let mut thread_id = 0;
     while let Ok(ReadResult::Input(line)) = reader.read_line() {
         if !line.trim().is_empty() {
             reader.add_history(line.clone());
@@ -32,7 +37,7 @@ fn main() {
                 println!("linefeed demo commands:");
                 println!();
                 for &(cmd, help) in DEMO_COMMANDS {
-                    println!("  {:15} - {}", cmd, help);
+                    println!("  {:16} - {}", cmd, help);
                 }
                 println!();
             }
@@ -63,6 +68,22 @@ fn main() {
                     println!("{:30} = {}", name, var);
                 }
             }
+            "spawn-log-thread" => {
+                let sender = reader.get_log_sender();
+                let my_thread_id = thread_id;
+                println!("Spawning log thread #{}", my_thread_id);
+                thread::spawn(move || {
+                    let mut rng = weak_rng();
+                    let mut i = 0usize;
+                    loop {
+                        writeln!(sender, "[#{}] Concurrent message #{}", my_thread_id, i).ok();
+                        let wait_ms = rng.gen_range(1, 500);
+                        thread::sleep(Duration::from_millis(wait_ms));
+                        i += 1;
+                    }
+                });
+                thread_id += 1;
+            }
             "quit" => break,
             "set" => {
                 let d = parse_text("<input>", &line);
@@ -85,14 +106,15 @@ fn split_first_word(s: &str) -> (&str, &str) {
 }
 
 static DEMO_COMMANDS: &'static [(&'static str, &'static str)] = &[
-    ("bind",            "Set bindings in inputrc format"),
-    ("get",             "Print the value of a variable"),
-    ("help",            "You're looking at it"),
-    ("list-bindings",   "List bound sequences"),
-    ("list-commands",   "List command names"),
-    ("list-variables",  "List variables"),
-    ("quit",            "Quit the demo"),
-    ("set",             "Assign a value to a variable"),
+    ("bind",             "Set bindings in inputrc format"),
+    ("get",              "Print the value of a variable"),
+    ("help",             "You're looking at it"),
+    ("list-bindings",    "List bound sequences"),
+    ("list-commands",    "List command names"),
+    ("list-variables",   "List variables"),
+    ("spawn-log-thread", "Spawns a thread that concurrently logs messages"),
+    ("quit",             "Quit the demo"),
+    ("set",              "Assign a value to a variable"),
 ];
 
 struct DemoCompleter;

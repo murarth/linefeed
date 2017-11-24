@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::slice;
 use std::str::from_utf8;
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::mpsc::{Sender, Receiver, TryRecvError, channel};
+use std::time::{Duration, Instant};
 
 use chars::{is_ctrl, unctrl, is_printable, DELETE, ESCAPE, RUBOUT};
 use command::{Category, Command};
@@ -46,6 +48,9 @@ pub const END_INVISIBLE: char = '\x02';
 /// Timeout, in milliseconds, to wait for input when "blinking"
 pub const BLINK_TIMEOUT_MS: u64 = 500;
 
+/// Default intervals at which the `Reader` will check for log messages.
+pub const POLL_LOG_INTERVAL_MS: u64 = 10;
+
 const TAB_STOP: usize = 8;
 const MAX_KILLS: usize = 10;
 
@@ -58,6 +63,62 @@ pub enum ReadResult {
     Input(String),
     /// Reported signal was received
     Signal(Signal),
+}
+
+struct LogReceiver {
+    send_counter: Arc<()>,
+    receive_handle: Receiver<String>,
+    send_handle: Sender<String>,
+}
+impl LogReceiver {
+    fn new() -> LogReceiver {
+        let (send_handle, receive_handle) = channel();
+        LogReceiver {
+            send_counter: Arc::new(()), receive_handle, send_handle,
+        }
+    }
+
+    fn is_dead(&mut self) -> bool {
+        // The only way there's only one instance of the Arc is if all other
+        // connections are dead.
+        Arc::strong_count(&self.send_counter) == 1
+    }
+
+    fn receive(&self) -> Option<String> {
+        match self.receive_handle.try_recv() {
+            Ok(str) => Some(str),
+            Err(TryRecvError::Empty) => None,
+            // This should never happen as we store a Sender in this object.
+            Err(TryRecvError::Disconnected) => unreachable!(),
+        }
+    }
+
+    fn new_sender(&self) -> LogSender {
+        LogSender {
+            _send_counter: self.send_counter.clone(),
+            send_handle: self.send_handle.clone(),
+        }
+    }
+}
+
+/// A handle that allows other threads to send messages to a Reader without
+/// causing display errors in a currently open prompt.
+#[derive(Clone)]
+pub struct LogSender {
+    _send_counter: Arc<()>,
+    send_handle: Sender<String>,
+}
+impl LogSender {
+    /// Writes a format to the prompt. If the Reader has been closed, this
+    /// function returns an error.
+    pub fn write_fmt(&self, args: fmt::Arguments) -> io::Result<()> {
+        if let Err(_) = self.send_handle.send(format!("{}", args)) {
+            Err(io::Error::new(io::ErrorKind::ConnectionReset,
+                               "Reader has already been closed."))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 /// Interactively reads user input
@@ -159,6 +220,9 @@ pub struct Reader<Term: Terminal> {
     keyseq_timeout: Option<Duration>,
     page_completions: bool,
     print_completions_horizontally: bool,
+
+    log_channel: Option<LogReceiver>,
+    poll_log_interval: Duration,
 }
 
 impl Reader<DefaultTerminal> {
@@ -251,6 +315,9 @@ impl<Term: Terminal> Reader<Term> {
             keyseq_timeout: Some(Duration::from_millis(KEYSEQ_TIMEOUT_MS)),
             page_completions: true,
             print_completions_horizontally: false,
+
+            log_channel: None,
+            poll_log_interval: Duration::from_millis(POLL_LOG_INTERVAL_MS),
         };
 
         r.read_init();
@@ -337,6 +404,8 @@ impl<Term: Terminal> Reader<Term> {
                 }
             }
         }
+
+        try!(self.check_received_logs());
 
         if self.input_accepted {
             self.backup_buffer.clear();
@@ -1627,6 +1696,50 @@ impl<Term: Terminal> Reader<Term> {
         Ok(())
     }
 
+    /// Checks whether an receiver exists.
+    fn has_receiver(&mut self) -> bool {
+        self.log_channel.is_some()
+    }
+
+    /// Gets the next line in the receiver if one exists. Otherwise, it returns `None`.
+    fn receive_next(&mut self) -> Option<String> {
+        let raw_recv = self.log_channel.as_ref().and_then(|c| c.receive());
+        if raw_recv.is_none() && self.log_channel.as_mut().map_or(false, |x| x.is_dead()) {
+            self.log_channel = None;
+        }
+        raw_recv
+    }
+
+    /// A wrapper around `self.term.wait_for_input` that periodically checks the log receiver
+    /// for input.
+    fn wait_for_input(&mut self, timeout: Option<Duration>) -> io::Result<bool> {
+        if self.has_receiver() {
+            match timeout {
+                Some(timeout) => {
+                    let mut current_time = Instant::now();
+                    let end_time = current_time + timeout;
+                    while current_time < end_time {
+                        let wait_duration = min(end_time - current_time, self.poll_log_interval);
+                        if try!(self.term.wait_for_input(Some(wait_duration))) {
+                            return Ok(true);
+                        }
+                        try!(self.check_received_logs());
+                        current_time = Instant::now();
+                    }
+                    Ok(false)
+                }
+                _ => loop {
+                    if try!(self.term.wait_for_input(Some(self.poll_log_interval))) {
+                        return Ok(true);
+                    }
+                    try!(self.check_received_logs());
+                }
+            }
+        } else {
+            self.term.wait_for_input(timeout)
+        }
+    }
+
     /// Returns the next character of input, reading from the input stream
     /// if necessary.
     ///
@@ -1644,7 +1757,7 @@ impl<Term: Terminal> Reader<Term> {
                     "invalid utf-8 input received"));
             }
 
-            if try!(self.term.wait_for_input(timeout)) {
+            if try!(self.wait_for_input(timeout)) {
                 let r = try!(self.read_input());
 
                 // No input; check for a signal and possibly return
@@ -1669,7 +1782,7 @@ impl<Term: Terminal> Reader<Term> {
                     "invalid utf-8 input received"));
             }
 
-            try!(self.term.wait_for_input(None));
+            try!(self.wait_for_input(None));
             try!(self.read_input());
         }
     }
@@ -1682,7 +1795,7 @@ impl<Term: Terminal> Reader<Term> {
                 return Ok(true);
             }
 
-            if try!(self.term.wait_for_input(timeout)) {
+            if try!(self.wait_for_input(timeout)) {
                 let n = try!(self.read_input());
 
                 if n == 0 && self.term.get_signal().is_some() {
@@ -2090,8 +2203,16 @@ impl<Term: Terminal> Reader<Term> {
         Ok(())
     }
 
+    /// Erases a previously drawn prompt, and resets the cursor position.
+    fn clear_prompt(&mut self) -> io::Result<()> {
+        let (line, _) = self.line_col(self.cursor);
+        try!(self.term.move_up(line));
+        try!(self.term.move_to_first_col());
+        self.term.clear_to_screen_end()
+    }
+
     /// Draws the prompt and current input, assuming the cursor is at column 0
-    fn draw_prompt(&self) -> io::Result<()> {
+    fn draw_prompt_no_receive(&self) -> io::Result<()> {
         try!(self.draw_raw_text(&self.prompt_prefix));
 
         match self.prompt_type {
@@ -2124,15 +2245,34 @@ impl<Term: Terminal> Reader<Term> {
         self.move_from(self.buffer.len())
     }
 
+    /// If logs were received, prints them then redraws the prompt.
+    fn check_received_logs(&mut self) -> io::Result<()> {
+        let mut text_written = false;
+        while let Some(text) = self.receive_next() {
+            if !text_written {
+                try!(self.clear_prompt());
+                text_written = true;
+            }
+            try!(self.draw_text(0, &text));
+        }
+        if text_written {
+            try!(self.draw_prompt_no_receive());
+        }
+        Ok(())
+    }
+
+    /// Prints received logs, then draws the prompt and current input, assuming
+    /// the cursor is at column 0
+    fn draw_prompt(&mut self) -> io::Result<()> {
+        while let Some(text) = self.receive_next() {
+            try!(self.draw_text(0, &text));
+        }
+        self.draw_prompt_no_receive()
+    }
+
     fn redraw_prompt(&mut self, new_prompt: PromptType) -> io::Result<()> {
-        let (line, _) = self.line_col(self.cursor);
-
-        try!(self.term.move_up(line));
-        try!(self.term.move_to_first_col());
-        try!(self.term.clear_to_screen_end());
-
+        try!(self.clear_prompt());
         self.prompt_type = new_prompt;
-
         self.draw_prompt()
     }
 
@@ -2600,6 +2740,35 @@ impl<Term: Terminal> Reader<Term> {
     pub fn set_word_break_chars<T>(&mut self, chars: T)
             where T: Into<Cow<'static, str>> {
         self.word_break = chars.into();
+    }
+
+    /// Creaes a sender object that allows other threads to log messages while
+    /// a prompt is open, without causing display errors. The `Reader` handles
+    /// checking the buffer, so unless `read_line` or a similar function is
+    /// running in the Reader, the messages sent will not be printed.
+    pub fn get_log_sender(&mut self) -> LogSender {
+        if let Some(ref receiver) = self.log_channel {
+            receiver.new_sender()
+        } else {
+            let receiver = LogReceiver::new();
+            let sender = receiver.new_sender();
+            self.log_channel = Some(receiver);
+            sender
+        }
+    }
+
+    /// Returns the interval at which `Reader` checks for log messages while
+    /// waiting for user input.
+    ///
+    /// The default value is `POLL_LOG_INTERVAL_MS` milliseconds.
+    pub fn poll_log_interval(&self) -> Duration {
+        self.poll_log_interval
+    }
+
+    /// Sets the interval at which `Reader` checks for log messages while
+    /// waiting for user input.
+    pub fn set_poll_log_interval(&mut self, interval: Duration) {
+        self.poll_log_interval = interval;
     }
 }
 
