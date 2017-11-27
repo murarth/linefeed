@@ -118,10 +118,7 @@ impl<'a, S: 'a + AsRef<str>> Iterator for Line<'a, S> {
     type Item = (usize, &'a str);
 
     fn next(&mut self) -> Option<(usize, &'a str)> {
-        let s = match self.strings.get(self.offset * self.stride) {
-            Some(s) => s.as_ref(),
-            None => return None
-        };
+        let s = self.strings.get(self.offset * self.stride)?.as_ref();
 
         let width = self.sizes.and_then(|sz| sz.get(self.offset).cloned())
             .unwrap_or_else(|| s.chars().count());

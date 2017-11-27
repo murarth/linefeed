@@ -235,7 +235,7 @@ impl Reader<DefaultTerminal> {
     /// The platform-dependent default terminal interface is used.
     pub fn new<T>(application: T) -> io::Result<Reader<DefaultTerminal>>
             where T: Into<Cow<'static, str>> {
-        let term = try!(DefaultTerminal::new());
+        let term = DefaultTerminal::new()?;
         Reader::with_term(application, term)
     }
 }
@@ -334,20 +334,20 @@ impl<Term: Terminal> Reader<Term> {
     /// Otherwise, user input is returned as `ReadResult::Input(_)`.
     pub fn read_line(&mut self) -> io::Result<ReadResult> {
         let signals = self.report_signals.union(&self.ignore_signals);
-        let _guard = try!(self.term.prepare(self.catch_signals, signals));
+        let _guard = self.term.prepare(self.catch_signals, signals)?;
         let res = self.read_line_impl();
 
         // Restore normal cursor mode
         if self.overwrite_mode {
-            try!(self.term.set_cursor_mode(CursorMode::Normal));
+            self.term.set_cursor_mode(CursorMode::Normal)?;
         }
 
         res
     }
 
     fn read_line_impl(&mut self) -> io::Result<ReadResult> {
-        try!(self.reset_input());
-        try!(self.draw_prompt());
+        self.reset_input()?;
+        self.draw_prompt()?;
 
         while !(self.end_of_file || self.input_accepted) {
             if let Some(sig) = self.term.take_signal() {
@@ -355,11 +355,11 @@ impl<Term: Terminal> Reader<Term> {
                     return Ok(ReadResult::Signal(sig));
                 }
                 if !self.ignore_signals.contains(sig) {
-                    try!(self.handle_signal(sig));
+                    self.handle_signal(sig)?;
                 }
             }
 
-            let ch = match try!(self.try_read_char(None)) {
+            let ch = match self.try_read_char(None)? {
                 Some(ch) => ch,
                 None => continue
             };
@@ -367,7 +367,7 @@ impl<Term: Terminal> Reader<Term> {
             match self.prompt_type {
                 PromptType::Normal => {
                     self.sequence.push(ch);
-                    try!(self.execute_sequence());
+                    self.execute_sequence()?;
                 }
                 PromptType::Number => {
                     if let Some(digit) = ch.to_digit(10).map(|u| u as i32) {
@@ -376,12 +376,12 @@ impl<Term: Terminal> Reader<Term> {
                         if self.input_arg.out_of_bounds() {
                             self.input_arg = Digit::Nothing;
                             self.explicit_arg = false;
-                            try!(self.redraw_prompt(PromptType::Normal));
+                            self.redraw_prompt(PromptType::Normal)?;
                         } else {
-                            try!(self.redraw_prompt(PromptType::Number));
+                            self.redraw_prompt(PromptType::Number)?;
                         }
                     } else {
-                        try!(self.redraw_prompt(PromptType::Normal));
+                        self.redraw_prompt(PromptType::Normal)?;
                         self.macro_buffer.insert(0, ch);
                     }
                 }
@@ -389,23 +389,23 @@ impl<Term: Terminal> Reader<Term> {
                     if ch == DELETE {
                         self.search_buffer.pop();
                         self.last_search.clone_from(&self.search_buffer);
-                        try!(self.search_history_update());
+                        self.search_history_update()?;
                     } else if self.is_abort(ch) {
-                        try!(self.abort_search_history());
+                        self.abort_search_history()?;
                     } else if is_ctrl(ch) {
                         // End search, handle input after cancelling
-                        try!(self.end_search_history());
+                        self.end_search_history()?;
                         self.macro_buffer.insert(0, ch);
                     } else {
                         self.search_buffer.push(ch);
                         self.last_search.clone_from(&self.search_buffer);
-                        try!(self.search_history_update());
+                        self.search_history_update()?;
                     }
                 }
             }
         }
 
-        try!(self.check_received_logs());
+        self.check_received_logs()?;
 
         if self.input_accepted {
             self.backup_buffer.clear();
@@ -438,7 +438,7 @@ impl<Term: Terminal> Reader<Term> {
         self.last_cmd = Category::Other;
         self.last_yank = None;
 
-        self.screen_size = try!(self.term.size());
+        self.screen_size = self.term.size()?;
 
         Ok(())
     }
@@ -459,7 +459,7 @@ impl<Term: Terminal> Reader<Term> {
     /// Sets the buffer to the given value.
     /// The cursor is moved to the end of the buffer.
     pub fn set_buffer(&mut self, buf: &str) -> io::Result<()> {
-        try!(self.move_to(0));
+        self.move_to(0)?;
         self.buffer.clear();
         self.buffer.push_str(buf);
         self.new_buffer()
@@ -636,9 +636,9 @@ impl<Term: Terminal> Reader<Term> {
             let new = old.saturating_add(n);
 
             if new >= self.history.len() {
-                try!(self.select_history_entry(None));
+                self.select_history_entry(None)?;
             } else {
-                try!(self.select_history_entry(Some(new)));
+                self.select_history_entry(Some(new))?;
             }
         }
 
@@ -653,7 +653,7 @@ impl<Term: Terminal> Reader<Term> {
                 self.history.len().saturating_sub(n)
             };
 
-            try!(self.select_history_entry(Some(new)));
+            self.select_history_entry(Some(new))?;
         }
 
         Ok(())
@@ -664,9 +664,9 @@ impl<Term: Terminal> Reader<Term> {
     /// Setting the entry to `None` will result in editing the input buffer.
     pub fn select_history_entry(&mut self, new: Option<usize>) -> io::Result<()> {
         if new != self.history_index {
-            try!(self.move_to(0));
+            self.move_to(0)?;
             self.set_history_entry(new);
-            try!(self.new_buffer());
+            self.new_buffer()?;
         }
 
         Ok(())
@@ -740,11 +740,11 @@ impl<Term: Terminal> Reader<Term> {
     /// If no bindings match and the sequence contains only printable characters,
     /// the sequence will be inserted as text.
     fn execute_sequence(&mut self) -> io::Result<()> {
-        if let Some(cmd) = try!(self.complete_sequence()) {
+        if let Some(cmd) = self.complete_sequence()? {
             let ch = self.sequence.chars().last().unwrap();
             let n = self.input_arg.to_i32();
 
-            try!(self.execute_command(cmd, n, ch));
+            self.execute_command(cmd, n, ch)?;
             self.sequence.clear();
         }
 
@@ -770,7 +770,7 @@ impl<Term: Terminal> Reader<Term> {
 
                 if is_printable(first) {
                     let n = self.input_arg.to_i32();
-                    try!(self.execute_command(Command::SelfInsert, n, first));
+                    self.execute_command(Command::SelfInsert, n, first)?;
                 }
 
                 if !rest.is_empty() {
@@ -785,7 +785,7 @@ impl<Term: Terminal> Reader<Term> {
 
         loop {
             let t = self.keyseq_timeout;
-            match try!(self.try_read_char(t)) {
+            match self.try_read_char(t)? {
                 Some(ch) => self.sequence.push(ch),
                 None => break
             }
@@ -858,14 +858,14 @@ impl<Term: Terminal> Reader<Term> {
         match cmd {
             Abort => (),
             AcceptLine => {
-                try!(self.term.write("\n"));
+                self.term.write("\n")?;
                 self.input_accepted = true;
             }
             Complete => {
                 if !self.disable_completion {
-                    try!(self.complete_word());
+                    self.complete_word()?;
                 } else if is_printable(ch) {
-                    try!(self.execute_command(SelfInsert, n, ch));
+                    self.execute_command(SelfInsert, n, ch)?;
                 }
             }
             InsertCompletions => {
@@ -874,7 +874,7 @@ impl<Term: Terminal> Reader<Term> {
                 }
 
                 if let Some(completions) = self.completions.take() {
-                    try!(self.insert_completions(&completions));
+                    self.insert_completions(&completions)?;
                     self.completions = Some(completions);
                 }
             }
@@ -884,7 +884,7 @@ impl<Term: Terminal> Reader<Term> {
                 }
 
                 if let Some(completions) = self.completions.take() {
-                    try!(self.show_completions(&completions));
+                    self.show_completions(&completions)?;
                     self.completions = Some(completions);
                 }
             }
@@ -894,9 +894,9 @@ impl<Term: Terminal> Reader<Term> {
                 }
 
                 if n > 0 {
-                    try!(self.next_completion(n as usize));
+                    self.next_completion(n as usize)?;
                 } else {
-                    try!(self.prev_completion((-n) as usize));
+                    self.prev_completion((-n) as usize)?;
                 }
             }
             MenuCompleteBackward => {
@@ -905,9 +905,9 @@ impl<Term: Terminal> Reader<Term> {
                 }
 
                 if n > 0 {
-                    try!(self.prev_completion(n as usize));
+                    self.prev_completion(n as usize)?;
                 } else {
-                    try!(self.next_completion((-n) as usize));
+                    self.next_completion((-n) as usize)?;
                 }
             }
             DigitArgument => {
@@ -923,16 +923,16 @@ impl<Term: Terminal> Reader<Term> {
                 self.input_arg = digit;
                 self.explicit_arg = true;
 
-                try!(self.redraw_prompt(PromptType::Number));
+                self.redraw_prompt(PromptType::Number)?;
             }
             SelfInsert => {
                 if n > 0 {
                     let n = n as usize;
 
                     if self.overwrite_mode {
-                        try!(self.overwrite(n, ch));
+                        self.overwrite(n, ch)?;
                     } else {
-                        try!(self.insert(n, ch));
+                        self.insert(n, ch)?;
                     }
 
                     if self.blink_matching_paren {
@@ -940,7 +940,7 @@ impl<Term: Terminal> Reader<Term> {
                             if let Some(pos) = find_matching_paren(
                                     &self.buffer[..self.cursor],
                                     &self.string_chars, open, ch) {
-                                try!(self.blink(pos));
+                                self.blink(pos)?;
                             }
                         }
                     }
@@ -948,93 +948,93 @@ impl<Term: Terminal> Reader<Term> {
             }
             TabInsert => {
                 if n > 0 {
-                    try!(self.insert(n as usize, '\t'));
+                    self.insert(n as usize, '\t')?;
                 }
             }
             InsertComment => {
                 if self.explicit_arg() &&
                         self.buffer.starts_with(&self.comment_begin[..]) {
-                    try!(self.move_to(0));
+                    self.move_to(0)?;
                     let n = self.comment_begin.len();
 
-                    try!(self.delete_range(..n));
+                    self.delete_range(..n)?;
                     self.input_accepted = true;
                 } else {
-                    try!(self.move_to(0));
+                    self.move_to(0)?;
                     let s = self.comment_begin.clone();
-                    try!(self.insert_str(&s));
+                    self.insert_str(&s)?;
                     self.input_accepted = true;
                 }
             }
             BackwardChar => {
                 if n > 0 {
-                    try!(self.backward_char(n as usize));
+                    self.backward_char(n as usize)?;
                 } else if n < 0 {
-                    try!(self.forward_char((-n) as usize));
+                    self.forward_char((-n) as usize)?;
                 }
             }
             ForwardChar => {
                 if n > 0 {
-                    try!(self.forward_char(n as usize));
+                    self.forward_char(n as usize)?;
                 } else if n < 0 {
-                    try!(self.backward_char((-n) as usize));
+                    self.backward_char((-n) as usize)?;
                 }
             }
             CharacterSearch => {
                 if n > 0 {
-                    try!(self.forward_search_char(n as usize));
+                    self.forward_search_char(n as usize)?;
                 } else if n < 0 {
-                    try!(self.backward_search_char((-n) as usize));
+                    self.backward_search_char((-n) as usize)?;
                 }
             }
             CharacterSearchBackward => {
                 if n > 0 {
-                    try!(self.backward_search_char(n as usize));
+                    self.backward_search_char(n as usize)?;
                 } else if n < 0 {
-                    try!(self.forward_search_char((-n) as usize));
+                    self.forward_search_char((-n) as usize)?;
                 }
             }
             BackwardWord => {
                 if n > 0 {
                     let pos = backward_word(n as usize,
                         &self.buffer, self.cursor, &self.word_break);
-                    try!(self.move_to(pos));
+                    self.move_to(pos)?;
                 } else if n < 0 {
                     let pos = forward_word((-n) as usize,
                         &self.buffer, self.cursor, &self.word_break);
-                    try!(self.move_to(pos));
+                    self.move_to(pos)?;
                 }
             }
             ForwardWord => {
                 if n > 0 {
                     let pos = forward_word(n as usize,
                         &self.buffer, self.cursor, &self.word_break);
-                    try!(self.move_to(pos));
+                    self.move_to(pos)?;
                 } else if n < 0 {
                     let pos = forward_word((-n) as usize,
                         &self.buffer, self.cursor, &self.word_break);
-                    try!(self.move_to(pos));
+                    self.move_to(pos)?;
                 }
             }
             BackwardKillLine => {
                 let r = ..self.cursor;
-                try!(self.kill_range(r));
+                self.kill_range(r)?;
             }
             KillLine => {
                 let r = self.cursor..;
-                try!(self.kill_range(r));
+                self.kill_range(r)?;
             }
             BackwardKillWord => {
                 if n > 0 {
                     let pos = backward_word(n as usize,
                         &self.buffer, self.cursor, &self.word_break);
                     let r = pos..self.cursor;
-                    try!(self.kill_range(r));
+                    self.kill_range(r)?;
                 } else if n < 0 {
                     let pos = forward_word((-n) as usize,
                         &self.buffer, self.cursor, &self.word_break);
                     let r = self.cursor..pos;
-                    try!(self.kill_range(r));
+                    self.kill_range(r)?;
                 }
             }
             KillWord => {
@@ -1042,12 +1042,12 @@ impl<Term: Terminal> Reader<Term> {
                     let pos = forward_word(n as usize,
                         &self.buffer, self.cursor, &self.word_break);
                     let r = self.cursor..pos;
-                    try!(self.kill_range(r));
+                    self.kill_range(r)?;
                 } else if n < 0 {
                     let pos = backward_word((-n) as usize,
                         &self.buffer, self.cursor, &self.word_break);
                     let r = pos..self.cursor;
-                    try!(self.kill_range(r));
+                    self.kill_range(r)?;
                 }
             }
             UnixWordRubout => {
@@ -1055,18 +1055,18 @@ impl<Term: Terminal> Reader<Term> {
                     let pos = backward_word(n as usize,
                         &self.buffer, self.cursor, " \t\n");
                     let r = pos..self.cursor;
-                    try!(self.kill_range(r));
+                    self.kill_range(r)?;
                 } else if n < 0 {
                     let pos = forward_word((-n) as usize,
                         &self.buffer, self.cursor, " \t\n");
                     let r = self.cursor..pos;
-                    try!(self.kill_range(r));
+                    self.kill_range(r)?;
                 }
             }
             ClearScreen => {
-                try!(self.clear_screen());
+                self.clear_screen()?;
             }
-            BeginningOfLine => try!(self.move_to(0)),
+            BeginningOfLine => self.move_to(0)?,
             EndOfFile => {
                 if self.buffer.is_empty() {
                     self.end_of_file = true;
@@ -1074,23 +1074,23 @@ impl<Term: Terminal> Reader<Term> {
             }
             EndOfLine => {
                 let pos = self.buffer.len();
-                try!(self.move_to(pos));
+                self.move_to(pos)?;
             }
             BackwardDeleteChar => {
                 if n > 0 {
                     if self.overwrite_mode {
-                        try!(self.overwrite_back(n as usize));
+                        self.overwrite_back(n as usize)?;
                     } else {
                         let pos = backward_char(n as usize,
                             &self.buffer, self.cursor);
                         let r = pos..self.cursor;
-                        try!(self.delete_range(r));
+                        self.delete_range(r)?;
                     }
                 } else if n < 0 {
                     let pos = forward_char((-n) as usize,
                         &self.buffer, self.cursor);
                     let r = self.cursor..pos;
-                    try!(self.delete_range(r));
+                    self.delete_range(r)?;
                 }
             }
             DeleteChar => {
@@ -1098,12 +1098,12 @@ impl<Term: Terminal> Reader<Term> {
                     let pos = forward_char(n as usize,
                         &self.buffer, self.cursor);
                     let r = self.cursor..pos;
-                    try!(self.delete_range(r));
+                    self.delete_range(r)?;
                 } else if n < 0 {
                     let pos = backward_char(n as usize,
                         &self.buffer, self.cursor);
                     let r = pos..self.cursor;
-                    try!(self.delete_range(r));
+                    self.delete_range(r)?;
                 }
             }
             TransposeChars => {
@@ -1131,7 +1131,7 @@ impl<Term: Terminal> Reader<Term> {
                         };
                     }
 
-                    try!(self.transpose_range(src, dest));
+                    self.transpose_range(src, dest)?;
                 }
             }
             TransposeWords => {
@@ -1164,53 +1164,53 @@ impl<Term: Terminal> Reader<Term> {
                                 };
                             }
 
-                            try!(self.transpose_range(src, dest));
+                            self.transpose_range(src, dest)?;
                         }
                     }
                 }
             }
             BeginningOfHistory => {
-                try!(self.select_history_entry(Some(0)));
+                self.select_history_entry(Some(0))?;
             }
             EndOfHistory => {
-                try!(self.select_history_entry(None));
+                self.select_history_entry(None)?;
             }
             NextHistory => {
                 if n > 0 {
-                    try!(self.next_history(n as usize));
+                    self.next_history(n as usize)?;
                 } else if n < 0 {
-                    try!(self.prev_history((-n) as usize));
+                    self.prev_history((-n) as usize)?;
                 }
             }
             PreviousHistory => {
                 if n > 0 {
-                    try!(self.prev_history(n as usize));
+                    self.prev_history(n as usize)?;
                 } else if n < 0 {
-                    try!(self.next_history((-n) as usize));
+                    self.next_history((-n) as usize)?;
                 }
             }
             ForwardSearchHistory => {
                 if self.last_cmd == Category::Search {
-                    try!(self.continue_search_history(false));
+                    self.continue_search_history(false)?;
                 } else {
-                    try!(self.start_search_history(false));
+                    self.start_search_history(false)?;
                 }
             }
             ReverseSearchHistory => {
                 if self.last_cmd == Category::Search {
-                    try!(self.continue_search_history(true));
+                    self.continue_search_history(true)?;
                 } else {
-                    try!(self.start_search_history(true));
+                    self.start_search_history(true)?;
                 }
             }
             QuotedInsert => {
                 let ch = {
-                    let _guard = try!(self.term.read_signals());
-                    try!(self.read_char())
+                    let _guard = self.term.read_signals()?;
+                    self.read_char()?
                 };
 
                 if n > 0 {
-                    try!(self.insert(n as usize, ch));
+                    self.insert(n as usize, ch)?;
                 }
             }
             OverwriteMode => {
@@ -1227,17 +1227,17 @@ impl<Term: Terminal> Reader<Term> {
                     CursorMode::Normal
                 };
 
-                try!(self.term.set_cursor_mode(mode));
+                self.term.set_cursor_mode(mode)?;
             }
             Yank => {
-                try!(self.yank());
+                self.yank()?;
             }
             YankPop => {
-                try!(self.yank_pop());
+                self.yank_pop()?;
             }
             Custom(ref name) => {
                 if let Some(fun) = self.get_function(name).cloned() {
-                    try!(fun.execute(self, n, ch));
+                    fun.execute(self, n, ch)?;
 
                     category = fun.category();
                 }
@@ -1269,10 +1269,10 @@ impl<Term: Terminal> Reader<Term> {
     /// (or until next user input), then restores the original cursor position.
     pub fn blink(&mut self, pos: usize) -> io::Result<()> {
         let orig = self.cursor;
-        try!(self.move_to(pos));
+        self.move_to(pos)?;
 
-        try!(self.wait_char(
-            Some(Duration::from_millis(BLINK_TIMEOUT_MS))));
+        self.wait_char(
+            Some(Duration::from_millis(BLINK_TIMEOUT_MS)))?;
 
         self.move_to(orig)
     }
@@ -1301,9 +1301,9 @@ impl<Term: Terminal> Reader<Term> {
     fn complete_word(&mut self) -> io::Result<()> {
         if let Some(completions) = self.completions.take() {
             if completions.len() == 1 {
-                try!(self.substitute_completion(&completions[0]));
+                self.substitute_completion(&completions[0])?;
             } else {
-                try!(self.show_completions(&completions));
+                self.show_completions(&completions)?;
                 self.completions = Some(completions);
             }
         } else {
@@ -1311,7 +1311,7 @@ impl<Term: Terminal> Reader<Term> {
             let completions = self.completions.take().unwrap_or_default();
 
             if completions.len() == 1 {
-                try!(self.substitute_completion(&completions[0]));
+                self.substitute_completion(&completions[0])?;
             } else if !completions.is_empty() {
                 let start = self.completion_start;
                 let end = self.cursor;
@@ -1320,7 +1320,7 @@ impl<Term: Terminal> Reader<Term> {
                     let pfx = longest_common_prefix(completions.iter()
                         .map(|compl| &compl.completion[..]))
                         .unwrap_or_default();
-                    try!(self.replace_str_forward(start..end, &pfx));
+                    self.replace_str_forward(start..end, &pfx)?;
                 }
 
                 self.completions = Some(completions);
@@ -1372,7 +1372,7 @@ impl<Term: Terminal> Reader<Term> {
         let table = Table::new(&completions, cols.as_ref().map(|c| &c[..]),
             self.print_completions_horizontally);
 
-        try!(self.term.write("\n"));
+        self.term.write("\n")?;
 
         if self.page_completions {
             self.show_page_completions(completions.len(), table)
@@ -1386,11 +1386,11 @@ impl<Term: Terminal> Reader<Term> {
             let mut space = 0;
 
             for (width, name) in line {
-                try!(self.term.move_right(space));
-                try!(self.term.write(name));
+                self.term.move_right(space)?;
+                self.term.write(name)?;
                 space = width - name.chars().count();
             }
-            try!(self.term.write("\n"));
+            self.term.write("\n")?;
         }
 
         Ok(())
@@ -1404,10 +1404,10 @@ impl<Term: Terminal> Reader<Term> {
 
         if n_completions >= self.completion_query_items {
             let s = format!("Display all {} possibilities? (y/n)", n_completions);
-            try!(self.term.write(&s));
+            self.term.write(&s)?;
 
             loop {
-                let ch = match try!(self.try_read_char(None)) {
+                let ch = match self.try_read_char(None)? {
                     Some(ch) => ch,
                     None => continue
                 };
@@ -1422,7 +1422,7 @@ impl<Term: Terminal> Reader<Term> {
                 }
             }
 
-            try!(self.term.write("\n"));
+            self.term.write("\n")?;
         }
 
         'show: while show_more {
@@ -1430,21 +1430,21 @@ impl<Term: Terminal> Reader<Term> {
                 let mut space = 0;
 
                 for (width, name) in line {
-                    try!(self.term.move_right(space));
-                    try!(self.term.write(name));
+                    self.term.move_right(space)?;
+                    self.term.write(name)?;
                     space = width - name.chars().count();
                 }
-                try!(self.term.write("\n"));
+                self.term.write("\n")?;
             }
 
             if !table.has_more() {
                 break;
             }
 
-            try!(self.term.write("--More--"));
+            self.term.write("--More--")?;
 
             loop {
-                let ch = match try!(self.try_read_char(None)) {
+                let ch = match self.try_read_char(None)? {
                     Some(ch) => ch,
                     None => continue
                 };
@@ -1453,7 +1453,7 @@ impl<Term: Terminal> Reader<Term> {
                     'y' | 'Y' | ' ' => n_lines,
                     '\r' => 1,
                     'q' | 'n' | 'Q' | 'N' | DELETE => {
-                        try!(self.clear_line());
+                        self.clear_line()?;
                         break 'show;
                     }
                     _ => continue
@@ -1462,7 +1462,7 @@ impl<Term: Terminal> Reader<Term> {
                 break;
             }
 
-            try!(self.clear_line());
+            self.clear_line()?;
         }
 
         self.draw_prompt()
@@ -1476,7 +1476,7 @@ impl<Term: Terminal> Reader<Term> {
         let new = (old + n) % max;
 
         if old != new {
-            try!(self.set_completion(new));
+            self.set_completion(new)?;
         }
 
         Ok(())
@@ -1507,14 +1507,14 @@ impl<Term: Terminal> Reader<Term> {
                 let start = self.completion_prefix;
                 let end = self.cursor;
 
-                try!(self.delete_range(start..end));
+                self.delete_range(start..end)?;
             } else {
                 let start = self.completion_start;
                 let end = self.cursor;
                 let s = self.completions.as_ref().unwrap()[new]
                     .completion(self.completion_append_character).into_owned();
 
-                try!(self.replace_str_forward(start..end, &s));
+                self.replace_str_forward(start..end, &s)?;
             }
         }
 
@@ -1678,17 +1678,17 @@ impl<Term: Terminal> Reader<Term> {
     fn handle_signal(&mut self, signal: Signal) -> io::Result<()> {
         match signal {
             Signal::Continue => {
-                try!(self.draw_prompt());
+                self.draw_prompt()?;
             }
             Signal::Interrupt => {
                 if self.echo_control_characters {
-                    try!(self.term.write("^C"));
+                    self.term.write("^C")?;
                 }
 
-                try!(self.reset_input());
+                self.reset_input()?;
                 self.macro_buffer.clear();
-                try!(self.term.write("\n"));
-                try!(self.draw_prompt());
+                self.term.write("\n")?;
+                self.draw_prompt()?;
             }
             _ => ()
         }
@@ -1720,19 +1720,19 @@ impl<Term: Terminal> Reader<Term> {
                     let end_time = current_time + timeout;
                     while current_time < end_time {
                         let wait_duration = min(end_time - current_time, self.poll_log_interval);
-                        if try!(self.term.wait_for_input(Some(wait_duration))) {
+                        if self.term.wait_for_input(Some(wait_duration))? {
                             return Ok(true);
                         }
-                        try!(self.check_received_logs());
+                        self.check_received_logs()?;
                         current_time = Instant::now();
                     }
                     Ok(false)
                 }
                 _ => loop {
-                    if try!(self.term.wait_for_input(Some(self.poll_log_interval))) {
+                    if self.term.wait_for_input(Some(self.poll_log_interval))? {
                         return Ok(true);
                     }
-                    try!(self.check_received_logs());
+                    self.check_received_logs()?;
                 }
             }
         } else {
@@ -1757,8 +1757,8 @@ impl<Term: Terminal> Reader<Term> {
                     "invalid utf-8 input received"));
             }
 
-            if try!(self.wait_for_input(timeout)) {
-                let r = try!(self.read_input());
+            if self.wait_for_input(timeout)? {
+                let r = self.read_input()?;
 
                 // No input; check for a signal and possibly return
                 if r == 0 && self.term.get_signal().is_some() {
@@ -1782,8 +1782,8 @@ impl<Term: Terminal> Reader<Term> {
                     "invalid utf-8 input received"));
             }
 
-            try!(self.wait_for_input(None));
-            try!(self.read_input());
+            self.wait_for_input(None)?;
+            self.read_input()?;
         }
     }
 
@@ -1795,8 +1795,8 @@ impl<Term: Terminal> Reader<Term> {
                 return Ok(true);
             }
 
-            if try!(self.wait_for_input(timeout)) {
-                let n = try!(self.read_input());
+            if self.wait_for_input(timeout)? {
+                let n = self.read_input()?;
 
                 if n == 0 && self.term.get_signal().is_some() {
                     return Ok(false);
@@ -1846,9 +1846,9 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     fn backward_search_char(&mut self, n: usize) -> io::Result<()> {
-        if let Some(ch) = try!(self.try_read_char(None)) {
+        if let Some(ch) = self.try_read_char(None)? {
             if let Some(pos) = backward_search_char(n, &self.buffer, self.cursor, ch) {
-                try!(self.move_to(pos));
+                self.move_to(pos)?;
             }
         }
 
@@ -1856,9 +1856,9 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     fn forward_search_char(&mut self, n: usize) -> io::Result<()> {
-        if let Some(ch) = try!(self.try_read_char(None)) {
+        if let Some(ch) = self.try_read_char(None)? {
             if let Some(pos) = forward_search_char(n, &self.buffer, self.cursor, ch) {
-                try!(self.move_to(pos));
+                self.move_to(pos)?;
             }
         }
 
@@ -1871,13 +1871,13 @@ impl<Term: Terminal> Reader<Term> {
         let start = range.start().cloned().unwrap_or(0);
         let end = range.end().cloned().unwrap_or_else(|| self.buffer.len());
 
-        try!(self.move_to(start));
+        self.move_to(start)?;
 
         let _ = self.buffer.drain(start..end);
 
-        try!(self.draw_buffer(start));
-        try!(self.term.clear_to_screen_end());
-        try!(self.move_from(self.buffer.len()));
+        self.draw_buffer(start)?;
+        self.term.clear_to_screen_end()?;
+        self.move_from(self.buffer.len())?;
 
         Ok(())
     }
@@ -1900,7 +1900,7 @@ impl<Term: Terminal> Reader<Term> {
                 self.append_kill_ring(buf);
             }
 
-            try!(self.delete_range(start..end));
+            self.delete_range(start..end)?;
         }
 
         Ok(())
@@ -1959,7 +1959,7 @@ impl<Term: Terminal> Reader<Term> {
             (dest, src)
         };
 
-        try!(self.move_to(left.start));
+        self.move_to(left.start)?;
 
         let a = self.buffer[left.clone()].to_owned();
         let b = self.buffer[right.clone()].to_owned();
@@ -1970,8 +1970,8 @@ impl<Term: Terminal> Reader<Term> {
         let _ = self.buffer.drain(left.clone());
         self.buffer.insert_str(left.start, &b);
 
-        try!(self.draw_buffer(self.cursor));
-        try!(self.term.clear_to_screen_end());
+        self.draw_buffer(self.cursor)?;
+        self.term.clear_to_screen_end()?;
 
         self.cursor = final_cur;
         self.move_from(self.buffer.len())
@@ -1984,7 +1984,7 @@ impl<Term: Terminal> Reader<Term> {
 
     fn move_to(&mut self, pos: usize) -> io::Result<()> {
         if pos != self.cursor {
-            try!(self.move_within(self.cursor, pos, &self.buffer));
+            self.move_within(self.cursor, pos, &self.buffer)?;
             self.cursor = pos;
         }
 
@@ -2005,15 +2005,15 @@ impl<Term: Terminal> Reader<Term> {
 
     fn move_rel(&self, lines: isize, cols: isize) -> io::Result<()> {
         if lines > 0 {
-            try!(self.term.move_down(lines as usize));
+            self.term.move_down(lines as usize)?;
         } else if lines < 0 {
-            try!(self.term.move_up((-lines) as usize));
+            self.term.move_up((-lines) as usize)?;
         }
 
         if cols > 0 {
-            try!(self.term.move_right(cols as usize));
+            self.term.move_right(cols as usize)?;
         } else if cols < 0 {
-            try!(self.term.move_left((-cols) as usize));
+            self.term.move_left((-cols) as usize)?;
         }
 
         Ok(())
@@ -2026,7 +2026,7 @@ impl<Term: Terminal> Reader<Term> {
             let start = self.cursor;
             self.last_yank = Some((start, start + kill.len()));
 
-            try!(self.insert_str(&kill));
+            self.insert_str(&kill)?;
         }
 
         Ok(())
@@ -2042,8 +2042,8 @@ impl<Term: Terminal> Reader<Term> {
             if let Some(kill) = self.kill_ring.front().cloned() {
                 self.last_yank = Some((start, start + kill.len()));
 
-                try!(self.move_to(start));
-                try!(self.replace_str_forward(start..end, &kill));
+                self.move_to(start)?;
+                self.replace_str_forward(start..end, &kill)?;
             }
         }
 
@@ -2078,7 +2078,7 @@ impl<Term: Terminal> Reader<Term> {
 
             let pos = backward_char(n_del, &self.buffer, self.cursor);
             let r = pos..self.cursor;
-            try!(self.delete_range(r));
+            self.delete_range(r)?;
 
             self.overwritten_append -= n_del;
             n -= n_del;
@@ -2095,13 +2095,13 @@ impl<Term: Terminal> Reader<Term> {
             let over = self.overwritten_chars.drain(over_pos..).collect::<String>();
 
             let r = pos..self.cursor;
-            try!(self.replace_str_backward(r, &over));
+            self.replace_str_backward(r, &over)?;
 
             n -= n_repl;
         }
 
         if n != 0 {
-            try!(self.backward_char(n));
+            self.backward_char(n)?;
         }
 
         Ok(())
@@ -2111,7 +2111,7 @@ impl<Term: Terminal> Reader<Term> {
     pub fn insert(&mut self, n: usize, ch: char) -> io::Result<()> {
         if n != 0 {
             let s = repeat(ch).take(n).collect::<String>();
-            try!(self.insert_str(&s));
+            self.insert_str(&s)?;
         }
 
         Ok(())
@@ -2131,11 +2131,11 @@ impl<Term: Terminal> Reader<Term> {
         if moves_combining && self.cursor != 0 {
             let pos = backward_char(1, &self.buffer, self.cursor);
             // Move without updating the cursor
-            try!(self.move_within(self.cursor, pos, &self.buffer));
-            try!(self.draw_buffer(pos));
+            self.move_within(self.cursor, pos, &self.buffer)?;
+            self.draw_buffer(pos)?;
             self.cursor += s.len();
         } else {
-            try!(self.draw_buffer(self.cursor));
+            self.draw_buffer(self.cursor)?;
             self.cursor += s.len();
         }
 
@@ -2146,7 +2146,7 @@ impl<Term: Terminal> Reader<Term> {
     /// Cursor is placed at the start of the range
     pub fn replace_str_backward<R: RangeArgument<usize>>(&mut self,
             range: R, s: &str) -> io::Result<()> {
-        try!(self.replace_str_impl(range, s));
+        self.replace_str_impl(range, s)?;
         self.move_from(self.buffer.len())
     }
 
@@ -2154,7 +2154,7 @@ impl<Term: Terminal> Reader<Term> {
     /// Cursor is placed at the end of the new string
     pub fn replace_str_forward<R: RangeArgument<usize>>(&mut self,
             range: R, s: &str) -> io::Result<()> {
-        try!(self.replace_str_impl(range, s));
+        self.replace_str_impl(range, s)?;
         self.cursor += s.len();
         self.move_from(self.buffer.len())
     }
@@ -2166,39 +2166,39 @@ impl<Term: Terminal> Reader<Term> {
             range: R, s: &str) -> io::Result<()> {
         let start = range.start().cloned().unwrap_or(0);
         let end = range.end().cloned().unwrap_or_else(|| self.buffer.len());
-        try!(self.move_to(start));
+        self.move_to(start)?;
 
         let _ = self.buffer.drain(start..end);
         self.buffer.insert_str(self.cursor, s);
 
-        try!(self.draw_buffer(self.cursor));
+        self.draw_buffer(self.cursor)?;
         self.term.clear_to_screen_end()
     }
 
     fn clear_line(&self) -> io::Result<()> {
-        try!(self.term.move_to_first_col());
+        self.term.move_to_first_col()?;
         self.term.clear_to_screen_end()
     }
 
     fn clear_screen(&mut self) -> io::Result<()> {
-        try!(self.term.clear_screen());
+        self.term.clear_screen()?;
 
         // A bit of a hack/workaround to not catching SIGWINCH:
         // If the user clears the screen (using Ctrl-L), the terminal size
         // will be updated before redrawing.
-        self.screen_size = try!(self.term.size());
+        self.screen_size = self.term.size()?;
 
-        try!(self.draw_prompt());
+        self.draw_prompt()?;
 
         Ok(())
     }
 
     /// Draws a new buffer on the screen. Cursor position is assumed to be `0`.
     fn new_buffer(&mut self) -> io::Result<()> {
-        try!(self.draw_buffer(0));
+        self.draw_buffer(0)?;
         self.cursor = self.buffer.len();
 
-        try!(self.term.clear_to_screen_end());
+        self.term.clear_to_screen_end()?;
 
         Ok(())
     }
@@ -2206,23 +2206,23 @@ impl<Term: Terminal> Reader<Term> {
     /// Erases a previously drawn prompt, and resets the cursor position.
     fn clear_prompt(&mut self) -> io::Result<()> {
         let (line, _) = self.line_col(self.cursor);
-        try!(self.term.move_up(line));
-        try!(self.term.move_to_first_col());
+        self.term.move_up(line)?;
+        self.term.move_to_first_col()?;
         self.term.clear_to_screen_end()
     }
 
     /// Draws the prompt and current input, assuming the cursor is at column 0
     fn draw_prompt_no_receive(&self) -> io::Result<()> {
-        try!(self.draw_raw_text(&self.prompt_prefix));
+        self.draw_raw_text(&self.prompt_prefix)?;
 
         match self.prompt_type {
             PromptType::Normal => {
-                try!(self.draw_raw_text(&self.prompt_suffix));
+                self.draw_raw_text(&self.prompt_suffix)?;
             }
             PromptType::Number => {
                 let n = self.input_arg.to_i32();
                 let s = format!("(arg: {}) ", n);
-                try!(self.draw_text(0, &s));
+                self.draw_text(0, &s)?;
             }
             PromptType::Search => {
                 let pre = match (self.reverse_search, self.search_failed) {
@@ -2235,13 +2235,13 @@ impl<Term: Terminal> Reader<Term> {
                 let ent = self.get_history(self.search_index);
                 let s = format!("{}`{}': {}", pre, self.search_buffer, ent);
 
-                try!(self.draw_text(0, &s));
+                self.draw_text(0, &s)?;
                 return self.move_within(ent.len(),
                     self.search_pos.unwrap_or(self.cursor), ent);
             }
         }
 
-        try!(self.draw_buffer(0));
+        self.draw_buffer(0)?;
         self.move_from(self.buffer.len())
     }
 
@@ -2250,13 +2250,13 @@ impl<Term: Terminal> Reader<Term> {
         let mut text_written = false;
         while let Some(text) = self.receive_next() {
             if !text_written {
-                try!(self.clear_prompt());
+                self.clear_prompt()?;
                 text_written = true;
             }
-            try!(self.draw_text(0, &text));
+            self.draw_text(0, &text)?;
         }
         if text_written {
-            try!(self.draw_prompt_no_receive());
+            self.draw_prompt_no_receive()?;
         }
         Ok(())
     }
@@ -2265,13 +2265,13 @@ impl<Term: Terminal> Reader<Term> {
     /// the cursor is at column 0
     fn draw_prompt(&mut self) -> io::Result<()> {
         while let Some(text) = self.receive_next() {
-            try!(self.draw_text(0, &text));
+            self.draw_text(0, &text)?;
         }
         self.draw_prompt_no_receive()
     }
 
     fn redraw_prompt(&mut self, new_prompt: PromptType) -> io::Result<()> {
-        try!(self.clear_prompt());
+        self.clear_prompt()?;
         self.prompt_type = new_prompt;
         self.draw_prompt()
     }
@@ -2280,7 +2280,7 @@ impl<Term: Terminal> Reader<Term> {
     fn draw_buffer(&self, pos: usize) -> io::Result<()> {
         let (_, col) = self.line_col(pos);
 
-        try!(self.draw_text(col, &self.buffer[pos..]));
+        self.draw_text(col, &self.buffer[pos..])?;
         Ok(())
     }
 

@@ -177,7 +177,7 @@ pub fn term_param<P: IntoParams>(parm: &CStr, params: P) -> Result<CString, Erro
 
 #[allow(dead_code)] // Not currently in use, but may be in the future.
 pub fn get_flag(name: &str) -> Result<bool, Error> {
-    let c_name = try!(CString::new(name));
+    let c_name = CString::new(name)?;
 
     let res = unsafe { tigetflag(c_name.as_ptr()) };
 
@@ -190,7 +190,7 @@ pub fn get_flag(name: &str) -> Result<bool, Error> {
 
 #[allow(dead_code)] // Not currently in use, but may be in the future.
 pub fn get_num(name: &str) -> Result<i32, Error> {
-    let c_name = try!(CString::new(name));
+    let c_name = CString::new(name)?;
 
     let res = unsafe { tigetnum(c_name.as_ptr()) };
 
@@ -202,7 +202,7 @@ pub fn get_num(name: &str) -> Result<i32, Error> {
 }
 
 pub fn get_str(name: &str) -> Result<&'static CStr, Error> {
-    let c_name = try!(CString::new(name));
+    let c_name = CString::new(name)?;
 
     let res = unsafe { tigetstr(c_name.as_ptr()) };
 

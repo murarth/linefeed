@@ -53,17 +53,17 @@ pub struct ConsoleGuard {
 impl ConsoleGuard {
     fn restore(&self) -> io::Result<()> {
         if !self.in_handle.is_null() {
-            try!(result_bool(unsafe {
-                k32::SetConsoleMode(self.in_handle, self.old_in_mode) }));
+            result_bool(unsafe {
+                k32::SetConsoleMode(self.in_handle, self.old_in_mode) })?;
         }
 
         if !self.out_handle.is_null() {
-            try!(result_bool(unsafe {
-                k32::SetConsoleMode(self.out_handle, self.old_out_mode) }));
+            result_bool(unsafe {
+                k32::SetConsoleMode(self.out_handle, self.old_out_mode) })?;
         }
 
         if self.clear_handler {
-            try!(result_bool(unsafe { k32::SetConsoleCtrlHandler(None, FALSE) }));
+            result_bool(unsafe { k32::SetConsoleCtrlHandler(None, FALSE) })?;
         }
 
         Ok(())
@@ -82,19 +82,19 @@ impl Console {
     fn clear_area(&self, start: COORD, n: DWORD) -> io::Result<()> {
         let mut n_chars = 0;
 
-        try!(result_bool(unsafe { k32::FillConsoleOutputAttribute(
+        result_bool(unsafe { k32::FillConsoleOutputAttribute(
             self.out_handle,
             0,
             n,
             start,
-            &mut n_chars) }));
+            &mut n_chars) })?;
 
-        try!(result_bool(unsafe { k32::FillConsoleOutputCharacterA(
+        result_bool(unsafe { k32::FillConsoleOutputCharacterA(
             self.out_handle,
             b' ' as CHAR,
             n,
             start,
-            &mut n_chars) }));
+            &mut n_chars) })?;
 
         Ok(())
     }
@@ -102,8 +102,8 @@ impl Console {
     fn get_info(&self) -> io::Result<CONSOLE_SCREEN_BUFFER_INFO> {
         let mut info = unsafe { zeroed() };
 
-        try!(result_bool(unsafe { k32::GetConsoleScreenBufferInfo(
-            self.out_handle, &mut info) }));
+        result_bool(unsafe { k32::GetConsoleScreenBufferInfo(
+            self.out_handle, &mut info) })?;
 
         Ok(info)
     }
@@ -111,7 +111,7 @@ impl Console {
     fn get_mode(&self, handle: HANDLE) -> io::Result<DWORD> {
         let mut mode = 0;
 
-        try!(result_bool(unsafe { k32::GetConsoleMode(handle, &mut mode) }));
+        result_bool(unsafe { k32::GetConsoleMode(handle, &mut mode) })?;
 
         Ok(mode)
     }
@@ -126,7 +126,7 @@ impl Console {
     }
 
     fn move_rel(&self, dist: COORD) -> io::Result<()> {
-        let info = try!(self.get_info());
+        let info = self.get_info()?;
 
         let size = info.dwSize;
         let cursor = info.dwCursorPosition;
@@ -145,10 +145,10 @@ impl Terminal for Console {
     type PrepareGuard = ConsoleGuard;
 
     fn new() -> io::Result<Console> {
-        let in_handle = try!(result_mut_ptr(unsafe {
-            k32::GetStdHandle(STD_INPUT_HANDLE) }));
-        let out_handle = try!(result_mut_ptr(unsafe {
-            k32::GetStdHandle(STD_OUTPUT_HANDLE) }));
+        let in_handle = result_mut_ptr(unsafe {
+            k32::GetStdHandle(STD_INPUT_HANDLE) })?;
+        let out_handle = result_mut_ptr(unsafe {
+            k32::GetStdHandle(STD_OUTPUT_HANDLE) })?;
 
         Ok(Console{
             in_handle: in_handle,
@@ -186,7 +186,7 @@ impl Terminal for Console {
     }
 
     fn size(&self) -> io::Result<Size> {
-        let info = try!(self.get_info());
+        let info = self.get_info()?;
 
         Ok(Size{
             lines: info.dwSize.Y as usize,
@@ -195,15 +195,15 @@ impl Terminal for Console {
     }
 
     fn clear_screen(&self) -> io::Result<()> {
-        let mut info = try!(self.get_info());
+        let mut info = self.get_info()?;
 
         let win_height = (info.srWindow.Bottom - info.srWindow.Top) + 1;
 
         if win_height == info.dwSize.Y {
             // Window and screen buffer are the same size. Just erase everything.
-            try!(self.clear_area(
+            self.clear_area(
                 COORD{X: 0, Y: 0},
-                (info.dwSize.X as DWORD * info.dwSize.Y as DWORD)));
+                (info.dwSize.X as DWORD * info.dwSize.Y as DWORD))?;
         } else {
             let down = min(
                 // Distance we can move down
@@ -216,10 +216,10 @@ impl Terminal for Console {
                 info.srWindow.Top += down as SHORT;
                 info.srWindow.Bottom += down as SHORT;
 
-                try!(result_bool(unsafe { k32::SetConsoleWindowInfo(
+                result_bool(unsafe { k32::SetConsoleWindowInfo(
                     self.out_handle,
                     TRUE,
-                    &info.srWindow) }));
+                    &info.srWindow) })?;
             }
 
             let clear = info.srWindow.Bottom - info.dwCursorPosition.Y;
@@ -245,26 +245,26 @@ impl Terminal for Console {
                     Attributes: 0,
                 };
 
-                try!(result_bool(unsafe { k32::ScrollConsoleScreenBufferW(
+                result_bool(unsafe { k32::ScrollConsoleScreenBufferW(
                     self.out_handle,
                     &src,
                     ptr::null(),
                     dest,
-                    &fill) }));
+                    &fill) })?;
             }
         }
 
         // Finally, move the cursor to the window origin
-        try!(self.move_abs(COORD{
+        self.move_abs(COORD{
             X: info.srWindow.Left,
             Y: info.srWindow.Top,
-        }));
+        })?;
 
         Ok(())
     }
 
     fn clear_to_screen_end(&self) -> io::Result<()> {
-        let info = try!(self.get_info());
+        let info = self.get_info()?;
 
         let start = info.dwCursorPosition;
         let size = info.dwSize;
@@ -310,7 +310,7 @@ impl Terminal for Console {
     }
 
     fn move_to_first_col(&self) -> io::Result<()> {
-        let info = try!(self.get_info());
+        let info = self.get_info()?;
 
         self.move_abs(COORD{X: 0, Y: info.dwCursorPosition.Y})
     }
@@ -342,8 +342,8 @@ impl Terminal for Console {
 
     fn prepare(&self, catch_signals: bool, _report_signals: SignalSet)
             -> io::Result<ConsoleGuard> {
-        let in_mode = try!(self.get_mode(self.in_handle));
-        let out_mode = try!(self.get_mode(self.out_handle));
+        let in_mode = self.get_mode(self.in_handle)?;
+        let out_mode = self.get_mode(self.out_handle)?;
 
         let mut guard = ConsoleGuard{
             in_handle: ptr::null_mut(),
@@ -353,10 +353,10 @@ impl Terminal for Console {
             clear_handler: false,
         };
 
-        try!(self.set_mode(self.in_handle, in_mode
+        self.set_mode(self.in_handle, in_mode
             | ENABLE_EXTENDED_FLAGS
             & !(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_MOUSE_INPUT |
-                ENABLE_QUICK_EDIT_MODE | ENABLE_WINDOW_INPUT)));
+                ENABLE_QUICK_EDIT_MODE | ENABLE_WINDOW_INPUT))?;
 
         guard.in_handle = self.in_handle;
         guard.old_in_mode = in_mode;
@@ -365,8 +365,8 @@ impl Terminal for Console {
 
         if catch_signals {
             LAST_SIGNAL.store(!0, Ordering::Relaxed);
-            try!(result_bool(unsafe { k32::SetConsoleCtrlHandler(
-                Some(ctrl_handler), TRUE) }));
+            result_bool(unsafe { k32::SetConsoleCtrlHandler(
+                Some(ctrl_handler), TRUE) })?;
             guard.clear_handler = true;
         }
 
@@ -382,9 +382,9 @@ impl Terminal for Console {
     }
 
     fn read_signals(&self) -> io::Result<ConsoleGuard> {
-        let mode = try!(self.get_mode(self.in_handle));
+        let mode = self.get_mode(self.in_handle)?;
 
-        try!(self.set_mode(self.in_handle, mode & !ENABLE_PROCESSED_INPUT));
+        self.set_mode(self.in_handle, mode & !ENABLE_PROCESSED_INPUT)?;
 
         Ok(ConsoleGuard{
             in_handle: self.in_handle,
@@ -399,11 +399,11 @@ impl Terminal for Console {
         let mut event = unsafe { zeroed() };
         let mut n = 0;
 
-        try!(result_bool(unsafe { k32::ReadConsoleInputW(
+        result_bool(unsafe { k32::ReadConsoleInputW(
             self.in_handle,
             &mut event,
             1,
-            &mut n) }));
+            &mut n) })?;
 
         if n == 1 {
             if let Some(key) = key_press(&event) {

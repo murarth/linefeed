@@ -84,19 +84,19 @@ impl TerminalGuard {
     }
 
     fn restore(&self) -> io::Result<()> {
-        try!(tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &self.old_tio));
+        tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &self.old_tio)?;
 
         if let Some(ref old_sigcont) = self.old_sigcont {
-            unsafe { try!(sigaction(NixSignal::SIGCONT, old_sigcont)); }
+            unsafe { sigaction(NixSignal::SIGCONT, old_sigcont)?; }
         }
         if let Some(ref old_sigint) = self.old_sigint {
-            unsafe { try!(sigaction(NixSignal::SIGINT, old_sigint)); }
+            unsafe { sigaction(NixSignal::SIGINT, old_sigint)?; }
         }
         if let Some(ref old_sigtstp) = self.old_sigtstp {
-            unsafe { try!(sigaction(NixSignal::SIGTSTP, old_sigtstp)); }
+            unsafe { sigaction(NixSignal::SIGTSTP, old_sigtstp)?; }
         }
         if let Some(ref old_sigquit) = self.old_sigquit {
-            unsafe { try!(sigaction(NixSignal::SIGQUIT, old_sigquit)); }
+            unsafe { sigaction(NixSignal::SIGQUIT, old_sigquit)?; }
         }
 
         Ok(())
@@ -115,9 +115,9 @@ impl Terminal for UnixTerminal {
     type PrepareGuard = TerminalGuard;
 
     fn new() -> io::Result<UnixTerminal> {
-        let tio = try!(tcgetattr(STDIN_FILENO));
+        let tio = tcgetattr(STDIN_FILENO)?;
 
-        try!(setup_term());
+        setup_term()?;
 
         Ok(UnixTerminal{
             name: var("TERM").ok(),
@@ -128,18 +128,18 @@ impl Terminal for UnixTerminal {
             word_erase: tio.c_cc[VWERASE],
             kill: tio.c_cc[VKILL],
 
-            key_delete: try!(get_str("kdch1")),
-            key_insert: try!(get_str("kich1")),
+            key_delete: get_str("kdch1")?,
+            key_insert: get_str("kich1")?,
 
-            clear: try!(get_str("clear")),
-            clear_eos: try!(get_str("ed")),
-            cursor_up: try!(get_str("cuu1")),
-            cursor_up_n: try!(get_str("cuu")),
-            cursor_down_n: try!(get_str("cud")),
-            cursor_left: try!(get_str("cub1")),
-            cursor_left_n: try!(get_str("cub")),
-            cursor_right: try!(get_str("cuf1")),
-            cursor_right_n: try!(get_str("cuf")),
+            clear: get_str("clear")?,
+            clear_eos: get_str("ed")?,
+            cursor_up: get_str("cuu1")?,
+            cursor_up_n: get_str("cuu")?,
+            cursor_down_n: get_str("cud")?,
+            cursor_left: get_str("cub1")?,
+            cursor_left_n: get_str("cub")?,
+            cursor_right: get_str("cuf1")?,
+            cursor_right_n: get_str("cuf")?,
 
             resume: Cell::new(None),
         })
@@ -164,7 +164,7 @@ impl Terminal for UnixTerminal {
     }
 
     fn size(&self) -> io::Result<Size> {
-        let sz = try!(get_winsize(STDOUT_FILENO));
+        let sz = get_winsize(STDOUT_FILENO)?;
 
         Ok(Size{
             lines: sz.ws_row as usize,
@@ -186,7 +186,7 @@ impl Terminal for UnixTerminal {
         } else if n == 1 {
             put(&self.cursor_up)
         } else {
-            let s = try!(term_param(&self.cursor_up_n, n as i32));
+            let s = term_param(&self.cursor_up_n, n as i32)?;
             put(&s)
         }
     }
@@ -198,7 +198,7 @@ impl Terminal for UnixTerminal {
             // terminfo cursor_down (cud1) does not behave the way we need it to.
             // Instead, it behaves (and is implemented as) '\n'.
             // So, we don't use it. We use parm_down_cursor (cud) instead.
-            let s = try!(term_param(&self.cursor_down_n, n as i32));
+            let s = term_param(&self.cursor_down_n, n as i32)?;
             put(&s)
         }
     }
@@ -209,7 +209,7 @@ impl Terminal for UnixTerminal {
         } else if n == 1 {
             put(&self.cursor_left)
         } else {
-            let s = try!(term_param(&self.cursor_left_n, n as i32));
+            let s = term_param(&self.cursor_left_n, n as i32)?;
             put(&s)
         }
     }
@@ -220,7 +220,7 @@ impl Terminal for UnixTerminal {
         } else if n == 1 {
             put(&self.cursor_right)
         } else {
-            let s = try!(term_param(&self.cursor_right_n, n as i32));
+            let s = term_param(&self.cursor_right_n, n as i32)?;
             put(&s)
         }
     }
@@ -264,7 +264,7 @@ impl Terminal for UnixTerminal {
 
     fn prepare(&self, catch_signals: bool, report_signals: SignalSet)
             -> io::Result<TerminalGuard> {
-        let old_tio = try!(tcgetattr(STDIN_FILENO));
+        let old_tio = tcgetattr(STDIN_FILENO)?;
         let mut tio = old_tio;
 
         tio.c_iflag.remove(INLCR | ICRNL);
@@ -272,7 +272,7 @@ impl Terminal for UnixTerminal {
         tio.c_cc[VMIN] = 0;
         tio.c_cc[VTIME] = 0;
 
-        try!(tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &tio));
+        tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &tio)?;
 
         let mut guard = TerminalGuard::new(old_tio);
 
@@ -283,20 +283,20 @@ impl Terminal for UnixTerminal {
                 SaFlags::empty(), SigSet::all());
 
             guard.old_sigcont = Some(unsafe {
-                try!(sigaction(NixSignal::SIGCONT, &action))
+                sigaction(NixSignal::SIGCONT, &action)?
             });
             guard.old_sigint = Some(unsafe {
-                try!(sigaction(NixSignal::SIGINT, &action))
+                sigaction(NixSignal::SIGINT, &action)?
             });
 
             if report_signals.contains(Signal::Suspend) {
                 guard.old_sigtstp = Some(unsafe {
-                    try!(sigaction(NixSignal::SIGTSTP, &action))
+                    sigaction(NixSignal::SIGTSTP, &action)?
                 });
             }
             if report_signals.contains(Signal::Quit) {
                 guard.old_sigquit = Some(unsafe {
-                    try!(sigaction(NixSignal::SIGQUIT, &action))
+                    sigaction(NixSignal::SIGQUIT, &action)?
                 });
             }
         };
@@ -315,13 +315,13 @@ impl Terminal for UnixTerminal {
     }
 
     fn read_signals(&self) -> io::Result<TerminalGuard> {
-        let old_tio = try!(tcgetattr(STDIN_FILENO));
+        let old_tio = tcgetattr(STDIN_FILENO)?;
         let mut tio = old_tio;
 
         tio.c_iflag.remove(IXON);
         tio.c_lflag.remove(ISIG);
 
-        try!(tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &tio));
+        tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &tio)?;
 
         Ok(TerminalGuard::new(old_tio))
     }
@@ -339,7 +339,7 @@ impl Terminal for UnixTerminal {
             let result = read_stdin(&mut buf[len..]);
             buf.set_len(len);
 
-            n = try!(result);
+            n = result?;
             buf.set_len(len + n);
         }
 
@@ -350,7 +350,7 @@ impl Terminal for UnixTerminal {
         let stdout = stdout();
         let mut lock = stdout.lock();
 
-        try!(lock.write_all(s.as_bytes()));
+        lock.write_all(s.as_bytes())?;
         lock.flush()
     }
 }

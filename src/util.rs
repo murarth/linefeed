@@ -9,10 +9,7 @@ pub fn longest_common_prefix<'a, I>(iter: I) -> Option<&'a str>
         where I: IntoIterator<Item=&'a str> {
     let mut iter = iter.into_iter();
 
-    let mut pfx = match iter.next() {
-        Some(s) => s,
-        None => return None
-    };
+    let mut pfx = iter.next()?;
 
     for s in iter {
         let n = pfx.chars().zip(s.chars())

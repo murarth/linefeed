@@ -186,10 +186,7 @@ impl<'a> Parser<'a> {
     fn parse_line(&mut self, line: &str) -> Option<Directive> {
         let mut tokens = Tokens::new(line);
 
-        let start = match tokens.next() {
-            Some(tok) => tok,
-            None => return None
-        };
+        let start = tokens.next()?;
 
         let dir = match start {
             Token::SpecialWord("if") => {
@@ -343,10 +340,7 @@ impl<'a> Iterator for Tokens<'a> {
     type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Token<'a>> {
-        let ch = match self.line.chars().next() {
-            Some(ch) => ch,
-            None => return None
-        };
+        let ch = self.line.chars().next()?;
 
         let tok = match ch {
             ':' => {
@@ -379,10 +373,7 @@ impl<'a> Iterator for Tokens<'a> {
 }
 
 fn parse_escape(chars: &mut Chars) -> Option<String> {
-    let ch = match chars.next() {
-        Some(ch) => ch,
-        None => return None
-    };
+    let ch = chars.next()?;
 
     let esc = match ch {
         'C'  => {
@@ -390,20 +381,14 @@ fn parse_escape(chars: &mut Chars) -> Option<String> {
                 Some('-') => (),
                 _ => return None
             }
-            match chars.next() {
-                Some(ch) => ctrl(ch),
-                _ => return None
-            }
+            ctrl(chars.next()?)
         }
         'M'  => {
             match chars.next() {
                 Some('-') => (),
                 _ => return None
             }
-            match chars.next() {
-                Some(ch) => return Some(meta(ch)),
-                _ => return None
-            }
+            return Some(meta(chars.next()?));
         }
         'e'  => '\x1b',
         '\\' => '\\',
@@ -440,23 +425,18 @@ fn parse_escape(chars: &mut Chars) -> Option<String> {
                 _ => return None
             }
 
-            match from_u32(n) {
-                Some(ch) => ch,
-                None => return None
-            }
+            from_u32(n)?
         }
         'v'  => '\x0b',
         'x'  => {
             let mut n = 0;
 
             for _ in 0..2 {
-                let digit = match chars.clone().next().and_then(|ch| ch.to_digit(16)) {
-                    Some(n) => {
-                        chars.next();
-                        n as u8
-                    }
-                    None => return None
-                };
+                // Peek the next character
+                let digit = chars.clone().next()?.to_digit(16)? as u8;
+
+                // Consume if valid
+                chars.next();
 
                 n <<= 4;
                 n |= digit;
@@ -468,13 +448,11 @@ fn parse_escape(chars: &mut Chars) -> Option<String> {
             let mut n = ch as u8 - b'0';
 
             for _ in 0..2 {
-                let digit = match chars.clone().next().and_then(|ch| ch.to_digit(8)) {
-                    Some(n) => {
-                        chars.next();
-                        n as u8
-                    }
-                    None => return None
-                };
+                // Peek the next character
+                let digit = chars.clone().next()?.to_digit(8)? as u8;
+
+                // Consume if valid
+                chars.next();
 
                 n <<= 3;
                 n |= digit;
