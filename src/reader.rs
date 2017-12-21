@@ -495,17 +495,16 @@ impl<Term: Terminal> Reader<Term> {
     pub fn set_prompt(&mut self, prompt: &str) {
         match prompt.rfind('\n') {
             Some(pos) => {
-                let (pre, _) = filter_visible(&prompt[..pos + 1]);
-                self.prompt_prefix = pre;
+                self.prompt_prefix = prompt[..pos + 1].to_owned();
 
-                let (suf, suf_virt) = filter_visible(&prompt[pos..]);
-                self.prompt_suffix = suf;
+                self.prompt_suffix = prompt[pos..].to_owned();
+                let suf_virt = filter_visible(&self.prompt_suffix);
                 self.prompt_suffix_length = self.display_size(&suf_virt, 0);
             }
             None => {
                 self.prompt_prefix.clear();
-                let (suf, suf_virt) = filter_visible(prompt);
-                self.prompt_suffix = suf;
+                self.prompt_suffix = prompt.to_owned();
+                let suf_virt = filter_visible(&self.prompt_suffix);
                 self.prompt_suffix_length = self.display_size(&suf_virt, 0);
             }
         }
@@ -2213,11 +2212,11 @@ impl<Term: Terminal> Reader<Term> {
 
     /// Draws the prompt and current input, assuming the cursor is at column 0
     fn draw_prompt_no_receive(&self) -> io::Result<()> {
-        self.draw_raw_text(&self.prompt_prefix)?;
+        self.draw_raw_prompt(&self.prompt_prefix)?;
 
         match self.prompt_type {
             PromptType::Normal => {
-                self.draw_raw_text(&self.prompt_suffix)?;
+                self.draw_raw_prompt(&self.prompt_suffix)?;
             }
             PromptType::Number => {
                 let n = self.input_arg.to_i32();
@@ -2290,65 +2289,78 @@ impl<Term: Terminal> Reader<Term> {
             allow_tab: true,
             allow_newline: true,
             .. Display::default()
-        })
+        }, false)
     }
 
-    fn draw_raw_text(&self, text: &str) -> io::Result<()> {
+    fn draw_raw_prompt(&self, text: &str) -> io::Result<()> {
         self.draw_text_impl(0, text, Display{
             allow_tab: true,
             allow_newline: true,
             allow_escape: true,
-        })
+        }, true)
     }
 
-    fn draw_text_impl(&self, start_col: usize, text: &str, disp: Display)
-            -> io::Result<()> {
+    fn draw_text_impl(&self, start_col: usize, text: &str, disp: Display,
+            handle_invisible: bool) -> io::Result<()> {
         let width = self.screen_size.columns;
         let mut col = start_col;
         let mut out = String::with_capacity(text.len());
 
-        for ch in text.chars().flat_map(|ch| display(ch, disp)) {
-            if ch == '\t' {
-                let n = TAB_STOP - (col % TAB_STOP);
+        let mut hidden = false;
 
-                if col + n > width {
-                    let pre = width - col;
-                    out.extend(repeat(' ').take(pre));
-                    out.push_str(" \r");
-                    out.extend(repeat(' ').take(n - pre));
-                    col = n - pre;
-                } else {
-                    out.extend(repeat(' ').take(n));
-                    col += n;
-
-                    if col == width {
-                        out.push_str(" \r");
-                        col = 0;
-                    }
-                }
-            } else if ch == '\n' {
-                out.push('\n');
-                col = 0;
-            } else if is_combining(ch) {
+        for ch in text.chars() {
+            if handle_invisible && ch == START_INVISIBLE {
+                hidden = true;
+            } else if handle_invisible && ch == END_INVISIBLE {
+                hidden = false;
+            } else if hidden {
+                // Render the character, but assume it has 0 width.
                 out.push(ch);
-            } else if is_wide(ch) {
-                if col == width - 1 {
-                    out.push_str("  \r");
-                    out.push(ch);
-                    col = 2;
-                } else {
-                    out.push(ch);
-                    col += 2;
-                }
             } else {
-                out.push(ch);
-                col += 1;
+                for ch in display(ch, disp) {
+                    if ch == '\t' {
+                        let n = TAB_STOP - (col % TAB_STOP);
 
-                if col == width {
-                    // Space pushes the cursor to the next line,
-                    // CR brings back to the start of the line.
-                    out.push_str(" \r");
-                    col = 0;
+                        if col + n > width {
+                            let pre = width - col;
+                            out.extend(repeat(' ').take(pre));
+                            out.push_str(" \r");
+                            out.extend(repeat(' ').take(n - pre));
+                            col = n - pre;
+                        } else {
+                            out.extend(repeat(' ').take(n));
+                            col += n;
+
+                            if col == width {
+                                out.push_str(" \r");
+                                col = 0;
+                            }
+                        }
+                    } else if ch == '\n' {
+                        out.push('\n');
+                        col = 0;
+                    } else if is_combining(ch) {
+                        out.push(ch);
+                    } else if is_wide(ch) {
+                        if col == width - 1 {
+                            out.push_str("  \r");
+                            out.push(ch);
+                            col = 2;
+                        } else {
+                            out.push(ch);
+                            col += 2;
+                        }
+                    } else {
+                        out.push(ch);
+                        col += 1;
+
+                        if col == width {
+                            // Space pushes the cursor to the next line,
+                            // CR brings back to the start of the line.
+                            out.push_str(" \r");
+                            col = 0;
+                        }
+                    }
                 }
             }
         }
@@ -2984,8 +2996,7 @@ enum BindResult {
     NotFound,
 }
 
-fn filter_visible(s: &str) -> (String, String) {
-    let mut real = String::new();
+fn filter_visible(s: &str) -> String {
     let mut virt = String::new();
     let mut ignore = false;
 
@@ -2994,16 +3005,12 @@ fn filter_visible(s: &str) -> (String, String) {
             ignore = true;
         } else if ch == END_INVISIBLE {
             ignore = false;
-        } else {
-            real.push(ch);
-
-            if !ignore {
-                virt.push(ch);
-            }
+        } else if !ignore {
+            virt.push(ch);
         }
     }
 
-    (real, virt)
+    virt
 }
 
 fn parse_bool(s: &str) -> Option<bool> {
