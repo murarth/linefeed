@@ -248,6 +248,7 @@ impl<Term: Terminal> Reader<Term> {
     pub fn with_term<T>(application: T, term: Term) -> io::Result<Reader<Term>>
             where T: Into<Cow<'static, str>> {
         let bindings = default_bindings(&term);
+        let size = term.size()?;
 
         let mut r = Reader{
             application: application.into(),
@@ -280,7 +281,7 @@ impl<Term: Terminal> Reader<Term> {
             search_index: None,
             search_pos: None,
 
-            screen_size: Size{lines: 0, columns: 0},
+            screen_size: size,
 
             bindings: bindings,
             functions: HashMap::new(),
@@ -497,7 +498,7 @@ impl<Term: Terminal> Reader<Term> {
             Some(pos) => {
                 self.prompt_prefix = prompt[..pos + 1].to_owned();
 
-                self.prompt_suffix = prompt[pos..].to_owned();
+                self.prompt_suffix = prompt[pos + 1..].to_owned();
                 let suf_virt = filter_visible(&self.prompt_suffix);
                 self.prompt_suffix_length = self.display_size(&suf_virt, 0);
             }
