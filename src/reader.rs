@@ -3015,6 +3015,7 @@ fn filter_visible(s: &str) -> String {
 }
 
 fn parse_bool(s: &str) -> Option<bool> {
+    #[allow(unused_imports)]
     use std::ascii::AsciiExt;
 
     match s {
