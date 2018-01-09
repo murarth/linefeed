@@ -1190,17 +1190,31 @@ impl<Term: Terminal> Reader<Term> {
                 }
             }
             ForwardSearchHistory => {
-                if self.last_cmd == Category::Search {
+                if self.last_cmd == Category::IncrementalSearch {
                     self.continue_search_history(false)?;
                 } else {
                     self.start_search_history(false)?;
                 }
             }
             ReverseSearchHistory => {
-                if self.last_cmd == Category::Search {
+                if self.last_cmd == Category::IncrementalSearch {
                     self.continue_search_history(true)?;
                 } else {
                     self.start_search_history(true)?;
+                }
+            }
+            HistorySearchForward => {
+                if self.last_cmd == Category::Search {
+                    self.continue_history_search(false)?;
+                } else {
+                    self.start_history_search(false)?;
+                }
+            }
+            HistorySearchBackward => {
+                if self.last_cmd == Category::Search {
+                    self.continue_history_search(true)?;
+                } else {
+                    self.start_history_search(true)?;
                 }
             }
             QuotedInsert => {
@@ -1519,6 +1533,48 @@ impl<Term: Terminal> Reader<Term> {
         }
 
         Ok(())
+    }
+
+    fn start_history_search(&mut self, reverse: bool) -> io::Result<()> {
+        self.search_buffer = self.buffer[..self.cursor].to_owned();
+        self.search_index = self.history_index;
+
+        self.continue_history_search(reverse)
+    }
+
+    fn continue_history_search(&mut self, reverse: bool) -> io::Result<()> {
+        if let Some(idx) = self.find_history_search(reverse) {
+            self.fill_history_entry(idx)?;
+            self.search_index = Some(idx);
+        } else if !reverse && self.search_buffer.is_empty() {
+            self.set_buffer("")?;
+            self.search_index = None;
+        }
+
+        Ok(())
+    }
+
+    fn fill_history_entry(&mut self, idx: usize) -> io::Result<()> {
+        let pos = self.cursor;
+        self.move_to(0)?;
+        self.buffer.clone_from(&self.history[idx]);
+        self.new_buffer()?;
+        self.move_to(pos)
+    }
+
+    fn find_history_search(&self, reverse: bool) -> Option<usize> {
+        let len = self.history.len();
+        let idx = self.search_index.unwrap_or(len);
+
+        if reverse {
+            self.history.iter().rev().skip(len - idx)
+                .position(|ent| ent.starts_with(&self.search_buffer))
+                .map(|pos| idx - (pos + 1))
+        } else {
+            self.history.iter().skip(idx + 1)
+                .position(|ent| ent.starts_with(&self.search_buffer))
+                .map(|pos| idx + (pos + 1))
+        }
     }
 
     fn start_search_history(&mut self, reverse: bool) -> io::Result<()> {

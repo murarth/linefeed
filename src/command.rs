@@ -136,6 +136,10 @@ define_commands!{
     ForwardSearchHistory => "forward-search-history",
     /// Incremental reverse search in history
     ReverseSearchHistory => "reverse-search-history",
+    /// Non-incremental forward history search using input up to the cursor
+    HistorySearchForward => "history-search-forward",
+    /// Non-incremental backward history search using input up to the cursor
+    HistorySearchBackward => "history-search-backward",
     /// Insert literal character
     QuotedInsert => "quoted-insert",
     /// Insert text into buffer from the kill ring
@@ -154,8 +158,10 @@ pub enum Category {
     Complete,
     /// Kill command
     Kill,
-    /// Search command
+    /// Non-incremental search command
     Search,
+    /// Incremental search command
+    IncrementalSearch,
     /// Yank command
     Yank,
     /// Digit argument command
@@ -175,7 +181,8 @@ impl Command {
                 MenuComplete | MenuCompleteBackward => Category::Complete,
             BackwardKillLine | KillLine | BackwardKillWord | KillWord |
                 UnixWordRubout => Category::Kill,
-            ForwardSearchHistory | ReverseSearchHistory => Category::Search,
+            ForwardSearchHistory | ReverseSearchHistory => Category::IncrementalSearch,
+            HistorySearchForward | HistorySearchBackward => Category::Search,
             Yank | YankPop => Category::Yank,
             _ => Category::Other
         }
