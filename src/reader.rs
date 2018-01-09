@@ -457,6 +457,13 @@ impl<Term: Terminal> Reader<Term> {
         &self.backup_buffer
     }
 
+    /// Returns the command `Category` of the most recently executed command.
+    ///
+    /// Some commands may use this to influence behavior of repeated commands.
+    pub fn last_command_category(&self) -> Category {
+        self.last_cmd
+    }
+
     /// Sets the buffer to the given value.
     /// The cursor is moved to the end of the buffer.
     pub fn set_buffer(&mut self, buf: &str) -> io::Result<()> {
