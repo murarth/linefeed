@@ -485,7 +485,7 @@ impl<Term: Terminal> Reader<Term> {
 
     /// Returns the size of the terminal at the last draw operation. See
     /// `Term::size()`.
-    pub fn size(&self) -> Size {
+    pub fn screen_size(&self) -> Size {
         self.screen_size
     }
 
