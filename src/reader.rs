@@ -483,6 +483,12 @@ impl<Term: Terminal> Reader<Term> {
         self.move_to(pos)
     }
 
+    /// Returns the size of the terminal at the last draw operation. See
+    /// `Term::size()`.
+    pub fn size(&self) -> Size {
+        self.screen_size
+    }
+
     /// Returns whether a numerical argument was explicitly supplied by the user.
     pub fn explicit_arg(&self) -> bool {
         self.explicit_arg
