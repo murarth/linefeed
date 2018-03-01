@@ -1,6 +1,6 @@
 //! Windows platform support
 
-pub type Terminal = console::Console;
+pub use self::console::terminal_read;
 
 mod console;
 pub mod path;

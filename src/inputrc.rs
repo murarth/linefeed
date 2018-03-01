@@ -55,7 +55,7 @@ pub fn parse_file<P: ?Sized>(filename: &P) -> Option<Vec<Directive>>
         return None;
     }
 
-    Some(Parser::new(filename, &buf).parse())
+    Some(parse_text(filename, &buf))
 }
 
 /// Parses some text and returns contained directives.

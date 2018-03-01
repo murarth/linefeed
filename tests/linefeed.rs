@@ -4,19 +4,21 @@ extern crate linefeed;
 
 use std::env::set_var;
 use std::io;
-use std::rc::Rc;
+use std::sync::Arc;
 
-use linefeed::{Command, Completer, Completion, Reader, ReadResult};
+use linefeed::{Command, Completer, Completion, Interface, Prompter, ReadResult};
 use linefeed::memory::MemoryTerminal;
 use linefeed::terminal::{Size, Terminal};
 
-const UP_ARROW: &'static str = "\x1b[A";
-const DOWN_ARROW: &'static str = "\x1b[B";
-const RIGHT_ARROW: &'static str = "\x1b[C";
-const LEFT_ARROW: &'static str = "\x1b[D";
-const HOME: &'static str = "\x1b[H";
+const UP_ARROW: &str = "\x1b[A";
+const DOWN_ARROW: &str = "\x1b[B";
+const RIGHT_ARROW: &str = "\x1b[C";
+const LEFT_ARROW: &str = "\x1b[D";
+const HOME: &str = "\x1b[H";
+const INSERT: &str = "\x1b[2~";
+const DELETE: &str = "\x1b[3~";
 
-fn test(input: &str) -> (MemoryTerminal, Reader<MemoryTerminal>) {
+fn test(input: &str) -> (MemoryTerminal, Interface<MemoryTerminal>) {
     let term = MemoryTerminal::with_size(Size{columns: 20, lines: 5});
 
     term.push_input(input);
@@ -24,11 +26,11 @@ fn test(input: &str) -> (MemoryTerminal, Reader<MemoryTerminal>) {
     // Skip reading inputrc configurations
     set_var("INPUTRC", "");
 
-    let mut r = Reader::with_term("test", term.clone()).unwrap();
+    let interface = Interface::with_term("test", term.clone()).unwrap();
 
-    r.set_prompt("$ ");
+    interface.set_prompt("$ ");
 
-    (term, r)
+    (term, interface)
 }
 
 fn assert_lines(term: &MemoryTerminal, tests: &[&str]) {
@@ -53,7 +55,7 @@ fn assert_lines(term: &MemoryTerminal, tests: &[&str]) {
     }
 }
 
-fn assert_read<T: Terminal>(r: &mut Reader<T>, line: &str) {
+fn assert_read<T: Terminal>(r: &mut Interface<T>, line: &str) {
     assert_matches!(r.read_line(), Ok(ReadResult::Input(ref s)) if s == line);
 }
 
@@ -66,7 +68,7 @@ fn test_eof() {
     term.push_input("foo\x04\n");
     assert_read(&mut r, "foo");
 
-    assert_lines(&term, &["$ $ foo"]);
+    assert_lines(&term, &["$", "$ foo"]);
 }
 
 #[test]
@@ -88,7 +90,7 @@ fn test_insert() {
 struct TestCompleter(Vec<&'static str>);
 
 impl<Term: Terminal> Completer<Term> for TestCompleter {
-    fn complete(&self, _word: &str, _reader: &Reader<Term>,
+    fn complete(&self, _word: &str, _reader: &Prompter<Term>,
             _start: usize, _end: usize) -> Option<Vec<Completion>> {
         Some(self.0.clone().into_iter()
             .map(|s| Completion::simple(s.to_owned())).collect())
@@ -99,7 +101,7 @@ impl<Term: Terminal> Completer<Term> for TestCompleter {
 fn test_complete() {
     let (term, mut r) = test("hi foo\t\t\n");
 
-    r.set_completer(Rc::new(TestCompleter(vec!["foobar", "foobaz"])));
+    r.set_completer(Arc::new(TestCompleter(vec!["foobar", "foobaz"])));
 
     assert_read(&mut r, "hi fooba");
     assert_lines(&term, &["$ hi fooba", "foobar  foobaz", "$ hi fooba"]);
@@ -117,7 +119,7 @@ fn test_complete() {
     assert_lines(&term, &["$ hi foobar foobaz"]);
 }
 
-fn fn_foo<Term: Terminal>(reader: &mut Reader<Term>, count: i32, ch: char)
+fn fn_foo<Term: Terminal>(reader: &mut Prompter<Term>, count: i32, ch: char)
         -> io::Result<()> {
     assert_eq!(count, 1);
     assert_eq!(ch, '\x18');
@@ -126,7 +128,7 @@ fn fn_foo<Term: Terminal>(reader: &mut Reader<Term>, count: i32, ch: char)
     reader.insert_str("foo")
 }
 
-fn fn_bar<Term: Terminal>(reader: &mut Reader<Term>, count: i32, ch: char)
+fn fn_bar<Term: Terminal>(reader: &mut Prompter<Term>, count: i32, ch: char)
         -> io::Result<()> {
     assert_eq!(count, 2);
     assert_eq!(ch, '\x19');
@@ -139,10 +141,10 @@ fn fn_bar<Term: Terminal>(reader: &mut Reader<Term>, count: i32, ch: char)
 fn test_function() {
     let (term, mut r) = test("");
 
-    r.define_function("fn-foo", Rc::new(fn_foo));
+    r.define_function("fn-foo", Arc::new(fn_foo));
     r.bind_sequence("\x18", Command::from_str("fn-foo"));
 
-    r.define_function("fn-bar", Rc::new(fn_bar));
+    r.define_function("fn-bar", Arc::new(fn_bar));
     r.bind_sequence("\x19", Command::from_str("fn-bar"));
 
     term.push_input("\x18\n");
@@ -239,7 +241,7 @@ fn test_delete() {
 
     term.push_input(LEFT_ARROW);
     term.push_input(LEFT_ARROW);
-    term.push_input(term.delete_seq());
+    term.push_input(DELETE);
     term.push_input("\n");
 
     assert_read(&mut r, "sp");
@@ -345,7 +347,7 @@ fn test_overwrite() {
 
     term.push_input(LEFT_ARROW);
     term.push_input(LEFT_ARROW);
-    term.push_input(term.insert_seq());
+    term.push_input(INSERT);
     term.push_input("xxx\n");
 
     assert_read(&mut r, "fxxx");
@@ -382,7 +384,7 @@ fn test_transpose_chars() {
 fn test_transpose_words() {
     let (term, mut r) = test("");
 
-    term.resize(Size{lines: 7, columns: 30});
+    term.resize(Size{lines: 7, columns: 40});
 
     term.push_input("a bb ccc");
     term.push_input("\x1btx\n");

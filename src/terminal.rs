@@ -3,120 +3,108 @@
 use std::io;
 use std::time::Duration;
 
+use mortal::{self, PrepareConfig, PrepareState, TerminalReadGuard, TerminalWriteGuard};
 use sys;
 
-/// Terminal cursor mode
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum CursorMode {
-    /// Normal mode
-    Normal,
-    /// Overwrite mode
-    Overwrite,
+pub use mortal::{CursorMode, Signal, SignalSet, Size};
+
+/// Default `Terminal` interface
+pub struct DefaultTerminal(mortal::Terminal);
+
+/// Represents the result of a `Terminal` read operation
+pub enum RawRead {
+    /// `n` bytes were read from the device
+    Bytes(usize),
+    /// The terminal window was resized
+    Resize(Size),
+    /// A signal was received while waiting for input
+    Signal(Signal),
 }
-
-/// Signal caught by a `Terminal`
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Signal {
-    /// Break signal (`SIGBREAK`); Windows only
-    Break,
-    /// Continue signal (`SIGCONT`); Unix only
-    Continue,
-    /// Interrupt signal (`SIGINT`)
-    Interrupt,
-    /// Suspend signal (`SIGTSTP`); Unix only
-    Suspend,
-    /// Quit signal (`SIGQUIT`); Unix only
-    Quit,
-}
-
-/// Contains a set of signals
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SignalSet(u32);
-
-impl SignalSet {
-    /// Returns an empty `SignalSet`.
-    pub fn new() -> SignalSet {
-        SignalSet(0)
-    }
-
-    /// Returns whether the given `Signal` is contained in the set.
-    pub fn contains(&self, signal: Signal) -> bool {
-        self.0 & signal.as_bit() != 0
-    }
-
-    /// Inserts the given `Signal` into the set.
-    pub fn insert(&mut self, signal: Signal) {
-        self.0 |= signal.as_bit();
-    }
-
-    /// Removes the given `Signal` from the set.
-    pub fn remove(&mut self, signal: Signal) {
-        self.0 &= !signal.as_bit();
-    }
-
-    /// Returns the intersection of the two sets.
-    pub fn intersection(&self, other: &SignalSet) -> SignalSet {
-        SignalSet(self.0 & other.0)
-    }
-
-    /// Returns the union of the two sets.
-    pub fn union(&self, other: &SignalSet) -> SignalSet {
-        SignalSet(self.0 | other.0)
-    }
-}
-
-impl Default for SignalSet {
-    fn default() -> SignalSet {
-        SignalSet::new()
-    }
-}
-
-impl Signal {
-    fn as_bit(&self) -> u32 {
-        1 << (*self as u32)
-    }
-}
-
-/// Represents the size of a terminal window
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct Size {
-    /// Number of lines in the terminal
-    pub lines: usize,
-    /// Number of columns in the terminal
-    pub columns: usize,
-}
-
-/// Type alias for the platform-dependent default `Terminal` interface
-pub type DefaultTerminal = sys::Terminal;
 
 /// Defines a low-level interface to the terminal
-pub trait Terminal: Sized {
-    /// Returned by `prepare` and `read_signals`.
-    /// When dropped, the prior terminal state will be restored.
-    type PrepareGuard;
+pub trait Terminal: Sized + Send + Sync {
+    // TODO: When generic associated types are implemented (and stabilized),
+    // boxed trait objects may be replaced by `Reader` and `Writer`.
+    /// Returned by `prepare`; passed to `restore` to restore state.
+    type PrepareState;
+    /*
+    /// Holds an exclusive read lock and provides read operations
+    type Reader: TerminalReader;
+    /// Holds an exclusive write lock and provides write operations
+    type Writer: TerminalWriter;
+    */
 
-    /// Initialize the terminal interface
-    fn new() -> io::Result<Self>;
+    /// Returns the name of the terminal.
+    fn name(&self) -> &str;
 
-    /// Returns the character that indicates end-of-file
-    fn eof_char(&self) -> char;
-    /// Returns the character that indicates literal quoting sequence
-    fn literal_char(&self) -> char;
-    /// Returns the character that indicates backward character erase
-    fn erase_char(&self) -> char;
-    /// Returns the character that indicates backward word erase
-    fn word_erase_char(&self) -> char;
-    /// Returns the character that indicates backward kill line
-    fn kill_char(&self) -> char;
+    /// Acquires a lock on terminal read operations and returns a value holding
+    /// that lock and granting access to such operations.
+    ///
+    /// The lock must not be released until the returned value is dropped.
+    fn lock_read<'a>(&'a self) -> Box<TerminalReader<Self> + 'a>;
 
-    /// Returns the key sequence that indicates forward delete character
-    fn delete_seq(&self) -> &str;
-    /// Returns the key sequence that indicates switching to insert mode
-    fn insert_seq(&self) -> &str;
+    /// Acquires a lock on terminal write operations and returns a value holding
+    /// that lock and granting access to such operations.
+    ///
+    /// The lock must not be released until the returned value is dropped.
+    fn lock_write<'a>(&'a self) -> Box<TerminalWriter<Self> + 'a>;
+}
 
-    /// Returns the name of the terminal, if one has been supplied
-    fn name(&self) -> Option<&str>;
+/// Holds a lock on `Terminal` read operations
+pub trait TerminalReader<Term: Terminal> {
+    /// Prepares the terminal for line reading and editing operations.
+    ///
+    /// If `block_signals` is `true`, the terminal will be configured to treat
+    /// special characters that would otherwise be interpreted as signals as
+    /// their literal value.
+    ///
+    /// If `block_signals` is `false`, a signal contained in the `report_signals`
+    /// set may be returned.
+    ///
+    /// # Notes
+    ///
+    /// This method may be called more than once. However, if the state values
+    /// are not restored in reverse order in which they were created,
+    /// the state of the underlying terminal device becomes undefined.
+    fn prepare(&mut self, block_signals: bool, report_signals: SignalSet)
+        -> io::Result<Term::PrepareState>;
 
+    /// Like `prepare`, but called when the write lock is already held.
+    ///
+    /// # Safety
+    ///
+    /// This method must be called with a `TerminalWriter` instance returned
+    /// by the same `Terminal` instance to which this `TerminalReader` belongs.
+    unsafe fn prepare_with_lock(&mut self, lock: &mut TerminalWriter<Term>,
+            block_signals: bool, report_signals: SignalSet)
+            -> io::Result<Term::PrepareState>;
+
+    /// Restores the terminal state using the given state data.
+    fn restore(&mut self, state: Term::PrepareState) -> io::Result<()>;
+
+    /// Like `restore`, but called when the write lock is already held.
+    ///
+    /// # Safety
+    ///
+    /// This method must be called with a `TerminalWriter` instance returned
+    /// by the same `Terminal` instance to which this `TerminalReader` belongs.
+    unsafe fn restore_with_lock(&mut self, lock: &mut TerminalWriter<Term>,
+            state: Term::PrepareState) -> io::Result<()>;
+
+    /// Reads some input from the terminal and appends it to the given buffer.
+    fn read(&mut self, buf: &mut Vec<u8>) -> io::Result<RawRead>;
+
+    /// Waits `timeout` for user input. If `timeout` is `None`, waits indefinitely.
+    ///
+    /// Returns `Ok(true)` if input becomes available within the given timeout
+    /// or if a signal is received.
+    ///
+    /// Returns `Ok(false)` if the timeout expires before input becomes available.
+    fn wait_for_input(&mut self, timeout: Option<Duration>) -> io::Result<bool>;
+}
+
+/// Holds a lock on `Terminal` write operations
+pub trait TerminalWriter<Term: Terminal> {
     /// Returns the size of the terminal window
     fn size(&self) -> io::Result<Size>;
 
@@ -126,76 +114,166 @@ pub trait Terminal: Sized {
     /// have the effect of moving the visible window down such that it shows
     /// an empty view of the buffer, preserving some or all of existing buffer
     /// contents, where possible.
-    fn clear_screen(&self) -> io::Result<()>;
+    fn clear_screen(&mut self) -> io::Result<()>;
 
     /// Clears characters on the line occupied by the cursor, beginning with the
     /// cursor and ending at the end of the line. Also clears all characters on
     /// all lines after the cursor.
-    fn clear_to_screen_end(&self) -> io::Result<()>;
+    fn clear_to_screen_end(&mut self) -> io::Result<()>;
 
     /// Moves the cursor up `n` cells; `n` may be zero.
-    fn move_up(&self, n: usize) -> io::Result<()>;
+    fn move_up(&mut self, n: usize) -> io::Result<()>;
+
     /// Moves the cursor down `n` cells; `n` may be zero.
-    fn move_down(&self, n: usize) -> io::Result<()>;
+    fn move_down(&mut self, n: usize) -> io::Result<()>;
+
     /// Moves the cursor left `n` cells; `n` may be zero.
-    fn move_left(&self, n: usize) -> io::Result<()>;
+    fn move_left(&mut self, n: usize) -> io::Result<()>;
+
     /// Moves the cursor right `n` cells; `n` may be zero.
-    fn move_right(&self, n: usize) -> io::Result<()>;
+    fn move_right(&mut self, n: usize) -> io::Result<()>;
 
     /// Moves the cursor to the first column of the current line
-    fn move_to_first_col(&self) -> io::Result<()>;
+    fn move_to_first_column(&mut self) -> io::Result<()>;
 
     /// Set the current cursor mode
-    fn set_cursor_mode(&self, mode: CursorMode) -> io::Result<()>;
+    fn set_cursor_mode(&mut self, mode: CursorMode) -> io::Result<()>;
 
-    /// Waits `timeout` for user input. If `timeout` is `None`, waits indefinitely.
+    /// Writes output to the terminal.
     ///
-    /// Returns `Ok(true)` if input becomes available within the given timeout
-    /// or if a signal is received.
-    ///
-    /// Returns `Ok(false)` if the timeout expires before input becomes available.
-    fn wait_for_input(&self, timeout: Option<Duration>) -> io::Result<bool>;
-
-    /// Prepares the terminal for line reading and editing operations.
-    ///
-    /// When the returned value is dropped, the terminal will be restored to its
-    /// state prior to calling `prepare`.
-    ///
-    /// If `catch_signals` is `true`, signal handlers will be registered.
-    /// These are also restored when the guard value is dropped.
-    ///
-    /// The set of signals caught should include those contained in
-    /// `report_signals`.
-    fn prepare(&self, catch_signals: bool, report_signals: SignalSet)
-        -> io::Result<Self::PrepareGuard>;
-
-    /// If the process received a signal since the last call to `take_signal`,
-    /// return it. Otherwise, return `None`.
-    fn get_signal(&self) -> Option<Signal>;
-
-    /// If the process received a signal since the last call to `take_signal`,
-    /// consume and return it. Otherwise, return `None`.
-    fn take_signal(&self) -> Option<Signal>;
-
-    /// Configures the terminal to interpret signal-inducing characters
-    /// as input without raising a signal.
-    ///
-    /// When the returned value is dropped, the terminal will be restored to its
-    /// state prior to calling `read_signals`.
-    fn read_signals(&self) -> io::Result<Self::PrepareGuard>;
-
-    /// Reads some input from the terminal and appends it to the given buffer.
-    ///
-    /// Returns the number of bytes read. `Ok(0)` may be returned to indicate
-    /// that no bytes can be read at this time.
-    fn read(&self, buf: &mut Vec<u8>) -> io::Result<usize>;
-
-    /// Writes output to the terminal and immediately flushes it to the device.
+    /// For each carriage return `'\r'` written to the terminal, the cursor
+    /// should be moved to the first column of the current line.
     ///
     /// For each newline `'\n'` written to the terminal, the cursor should
     /// be moved to the first column of the following line.
     ///
     /// The terminal interface shall not automatically move the cursor to the next
     /// line when `write` causes a character to be written to the final column.
-    fn write(&self, s: &str) -> io::Result<()>;
+    fn write(&mut self, s: &str) -> io::Result<()>;
+
+    /// Flushes any currently buffered output data.
+    ///
+    /// `TerminalWriter` instances may not buffer data on all systems.
+    ///
+    /// Data must be flushed when the `TerminalWriter` instance is dropped.
+    fn flush(&mut self) -> io::Result<()>;
+}
+
+impl DefaultTerminal {
+    /// Opens access to the terminal device associated with standard output.
+    pub fn new() -> io::Result<DefaultTerminal> {
+        mortal::Terminal::new().map(DefaultTerminal)
+    }
+
+    /// Opens access to the terminal device associated with standard error.
+    pub fn stderr() -> io::Result<DefaultTerminal> {
+        mortal::Terminal::stderr().map(DefaultTerminal)
+    }
+}
+
+impl Terminal for DefaultTerminal {
+    type PrepareState = PrepareState;
+
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    fn lock_read<'a>(&'a self) -> Box<TerminalReader<Self> + 'a> {
+        Box::new(self.0.lock_read().unwrap())
+    }
+
+    fn lock_write<'a>(&'a self) -> Box<TerminalWriter<Self> + 'a> {
+        Box::new(self.0.lock_write().unwrap())
+    }
+}
+
+impl<'a> TerminalReader<DefaultTerminal> for TerminalReadGuard<'a> {
+    fn prepare(&mut self, block_signals: bool, report_signals: SignalSet)
+            -> io::Result<PrepareState> {
+        self.prepare(PrepareConfig{
+            block_signals,
+            enable_control_flow: !block_signals,
+            enable_keypad: false,
+            report_signals,
+            .. PrepareConfig::default()
+        })
+    }
+
+    unsafe fn prepare_with_lock(&mut self,
+            lock: &mut TerminalWriter<DefaultTerminal>,
+            block_signals: bool, report_signals: SignalSet)
+            -> io::Result<PrepareState> {
+        let lock = &mut *(lock as *mut _ as *mut TerminalWriteGuard);
+
+        self.prepare_with_lock(lock, PrepareConfig{
+            block_signals,
+            enable_control_flow: !block_signals,
+            enable_keypad: false,
+            report_signals,
+            .. PrepareConfig::default()
+        })
+    }
+
+    fn restore(&mut self, state: PrepareState) -> io::Result<()> {
+        self.restore(state)
+    }
+
+    unsafe fn restore_with_lock(&mut self,
+            lock: &mut TerminalWriter<DefaultTerminal>, state: PrepareState)
+            -> io::Result<()> {
+        let lock = &mut *(lock as *mut _ as *mut TerminalWriteGuard);
+        self.restore_with_lock(lock, state)
+    }
+
+    fn read(&mut self, buf: &mut Vec<u8>) -> io::Result<RawRead> {
+        sys::terminal_read(self, buf)
+    }
+
+    fn wait_for_input(&mut self, timeout: Option<Duration>) -> io::Result<bool> {
+        self.wait_event(timeout)
+    }
+
+}
+
+impl<'a> TerminalWriter<DefaultTerminal> for TerminalWriteGuard<'a> {
+    fn size(&self) -> io::Result<Size> {
+        self.size()
+    }
+
+    fn clear_screen(&mut self) -> io::Result<()> {
+        self.clear_screen()
+    }
+
+    fn clear_to_screen_end(&mut self) -> io::Result<()> {
+        self.clear_to_screen_end()
+    }
+
+    fn move_up(&mut self, n: usize) -> io::Result<()> {
+        self.move_up(n)
+    }
+    fn move_down(&mut self, n: usize) -> io::Result<()> {
+        self.move_down(n)
+    }
+    fn move_left(&mut self, n: usize) -> io::Result<()> {
+        self.move_left(n)
+    }
+    fn move_right(&mut self, n: usize) -> io::Result<()> {
+        self.move_right(n)
+    }
+
+    fn move_to_first_column(&mut self) -> io::Result<()> {
+        self.move_to_first_column()
+    }
+
+    fn set_cursor_mode(&mut self, mode: CursorMode) -> io::Result<()> {
+        self.set_cursor_mode(mode)
+    }
+
+    fn write(&mut self, s: &str) -> io::Result<()> {
+        self.write_str(s)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush()
+    }
 }

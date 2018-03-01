@@ -1,31 +1,33 @@
 extern crate linefeed;
 extern crate rand;
 
-use std::rc::Rc;
+use std::io;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use linefeed::{Reader, ReadResult};
+use rand::{Rng, weak_rng};
+
+use linefeed::{Interface, Prompter, ReadResult};
 use linefeed::chars::escape_sequence;
 use linefeed::command::COMMANDS;
 use linefeed::complete::{Completer, Completion};
 use linefeed::inputrc::parse_text;
 use linefeed::terminal::Terminal;
-use rand::{Rng, weak_rng};
 
 const HISTORY_FILE: &str = "linefeed.hst";
 
-fn main() {
-    let mut reader = Reader::new("demo").unwrap();
+fn main() -> io::Result<()> {
+    let interface = Arc::new(Interface::new("demo")?);
 
     println!("This is the linefeed demo program.");
     println!("Enter \"help\" for a list of commands.");
     println!("Press Ctrl-D or enter \"quit\" to exit.");
     println!("");
 
-    reader.set_completer(Rc::new(DemoCompleter));
-    reader.set_prompt("demo> ");
-    if let Err(e) = reader.load_history(HISTORY_FILE) {
+    interface.set_completer(Arc::new(DemoCompleter));
+    interface.set_prompt("demo> ");
+    if let Err(e) = interface.load_history(HISTORY_FILE) {
         if e.kind() == std::io::ErrorKind::NotFound {
             println!("History file {} doesn't exist, not loading history.", HISTORY_FILE);
         } else {
@@ -34,9 +36,9 @@ fn main() {
     }
 
     let mut thread_id = 0;
-    while let ReadResult::Input(line) = reader.read_line().unwrap() {
+    while let ReadResult::Input(line) = interface.read_line()? {
         if !line.trim().is_empty() {
-            reader.add_history(line.clone());
+            interface.add_history(line.clone());
         }
 
         let (cmd, args) = split_first_word(&line);
@@ -46,23 +48,23 @@ fn main() {
                 println!("linefeed demo commands:");
                 println!();
                 for &(cmd, help) in DEMO_COMMANDS {
-                    println!("  {:16} - {}", cmd, help);
+                    println!("  {:15} - {}", cmd, help);
                 }
                 println!();
             }
             "bind" => {
                 let d = parse_text("<input>", args);
-                reader.evaluate_directives(d);
+                interface.evaluate_directives(d);
             }
             "get" => {
-                if let Some(var) = reader.get_variable(args) {
+                if let Some(var) = interface.get_variable(args) {
                     println!("{} = {}", args, var);
                 } else {
                     println!("no variable named `{}`", args);
                 }
             }
             "list-bindings" => {
-                for (seq, cmd) in reader.bindings() {
+                for (seq, cmd) in interface.lock_reader().bindings() {
                     let seq = format!("\"{}\"", escape_sequence(seq));
                     println!("{:20}: {}", seq, cmd);
                 }
@@ -73,19 +75,22 @@ fn main() {
                 }
             }
             "list-variables" => {
-                for (name, var) in reader.variables() {
+                for (name, var) in interface.lock_reader().variables() {
                     println!("{:30} = {}", name, var);
                 }
             }
             "spawn-log-thread" => {
-                let sender = reader.get_log_sender();
                 let my_thread_id = thread_id;
                 println!("Spawning log thread #{}", my_thread_id);
+
+                let iface = interface.clone();
+
                 thread::spawn(move || {
                     let mut rng = weak_rng();
                     let mut i = 0usize;
                     loop {
-                        writeln!(sender, "[#{}] Concurrent message #{}", my_thread_id, i).ok();
+                        writeln!(iface, "[#{}] Concurrent message #{}",
+                            my_thread_id, i).unwrap();
                         let wait_ms = rng.gen_range(1, 500);
                         thread::sleep(Duration::from_millis(wait_ms));
                         i += 1;
@@ -94,12 +99,12 @@ fn main() {
                 thread_id += 1;
             }
             "history" => {
-                for (i, entry) in reader.history().enumerate() {
+                for (i, entry) in interface.lock_writer()?.history().enumerate() {
                     println!("{}: {}", i, entry);
                 }
             }
             "save-history" => {
-                if let Err(e) = reader.save_history(HISTORY_FILE) {
+                if let Err(e) = interface.save_history(HISTORY_FILE) {
                     eprintln!("Could not save history file {}: {}", HISTORY_FILE, e);
                 } else {
                     println!("History saved to {}", HISTORY_FILE);
@@ -108,13 +113,15 @@ fn main() {
             "quit" => break,
             "set" => {
                 let d = parse_text("<input>", &line);
-                reader.evaluate_directives(d);
+                interface.evaluate_directives(d);
             }
             _ => println!("read input: {:?}", line)
         }
     }
 
     println!("Goodbye.");
+
+    Ok(())
 }
 
 fn split_first_word(s: &str) -> (&str, &str) {
@@ -126,7 +133,7 @@ fn split_first_word(s: &str) -> (&str, &str) {
     }
 }
 
-static DEMO_COMMANDS: &'static [(&'static str, &'static str)] = &[
+static DEMO_COMMANDS: &[(&str, &str)] = &[
     ("bind",             "Set bindings in inputrc format"),
     ("get",              "Print the value of a variable"),
     ("help",             "You're looking at it"),
@@ -143,9 +150,9 @@ static DEMO_COMMANDS: &'static [(&'static str, &'static str)] = &[
 struct DemoCompleter;
 
 impl<Term: Terminal> Completer<Term> for DemoCompleter {
-    fn complete(&self, word: &str, reader: &Reader<Term>,
+    fn complete(&self, word: &str, prompter: &Prompter<Term>,
             start: usize, _end: usize) -> Option<Vec<Completion>> {
-        let line = reader.buffer();
+        let line = prompter.buffer();
 
         let mut words = line[..start].split_whitespace();
 
@@ -167,7 +174,7 @@ impl<Term: Terminal> Completer<Term> for DemoCompleter {
                 if words.count() == 0 {
                     let mut res = Vec::new();
 
-                    for (name, _) in reader.variables() {
+                    for (name, _) in prompter.variables() {
                         if name.starts_with(word) {
                             res.push(Completion::simple(name.to_owned()));
                         }

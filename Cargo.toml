@@ -18,19 +18,13 @@ readme = "README.md"
 travis-ci = { repository = "murarth/linefeed" }
 
 [dependencies]
-libc = "0.2"
-unicode-normalization = "0.1.5"
-unicode-width = "0.1.4"
-
-[target.'cfg(unix)'.dependencies]
-nix = "0.7"
+mortal = "0.1"
 
 [target.'cfg(windows)'.dependencies]
-kernel32-sys = "0.2"
-ole32-sys = "0.2"
-shell32-sys = "0.1"
-winapi = "0.2"
+winapi = { version = "0.3", features = [
+    "combaseapi", "minwindef", "ntdef", "shlobj", "winbase", "wincon",
+    "winerror", "winuser" ] }
 
 [dev-dependencies]
-assert_matches = "1.0"
-rand = "0.3"
+assert_matches = "1.2"
+rand = "0.4"

@@ -4,7 +4,7 @@ use std::borrow::Cow::{self, Borrowed, Owned};
 use std::fs::read_dir;
 use std::path::{is_separator, MAIN_SEPARATOR};
 
-use reader::Reader;
+use prompter::Prompter;
 use terminal::Terminal;
 
 /// Represents a single possible completion
@@ -118,18 +118,18 @@ impl Default for Suffix {
     }
 }
 
-/// Performs completion for `Reader` when triggered by a user input sequence
-pub trait Completer<Term: Terminal> {
+/// Performs completion for `Prompter` when triggered by a user input sequence
+pub trait Completer<Term: Terminal>: Send + Sync {
     /// Returns the set of possible completions for the prefix `word`.
-    fn complete(&self, word: &str, reader: &Reader<Term>,
+    fn complete(&self, word: &str, prompter: &Prompter<Term>,
         start: usize, end: usize) -> Option<Vec<Completion>>;
 
     /// Returns the starting position of the word under the cursor.
     ///
-    /// The default implementation uses `Reader::word_break_chars()` to
+    /// The default implementation uses `Prompter::word_break_chars()` to
     /// detect the start of a word.
-    fn word_start(&self, line: &str, end: usize, reader: &Reader<Term>) -> usize {
-        word_break_start(&line[..end], reader.word_break_chars())
+    fn word_start(&self, line: &str, end: usize, prompter: &Prompter<Term>) -> usize {
+        word_break_start(&line[..end], prompter.word_break_chars())
     }
 
     /// Quotes a possible completion for insertion into input.
@@ -145,11 +145,11 @@ pub trait Completer<Term: Terminal> {
 
 /// `Completer` type that performs no completion
 ///
-/// This is the default `Completer` for a new `Reader` instance.
+/// This is the default `Completer` for a new `Prompter` instance.
 pub struct DummyCompleter;
 
 impl<Term: Terminal> Completer<Term> for DummyCompleter {
-    fn complete(&self, _word: &str, _reader: &Reader<Term>,
+    fn complete(&self, _word: &str, _reader: &Prompter<Term>,
             _start: usize, _end: usize) -> Option<Vec<Completion>> { None }
 }
 
@@ -157,12 +157,12 @@ impl<Term: Terminal> Completer<Term> for DummyCompleter {
 pub struct PathCompleter;
 
 impl<Term: Terminal> Completer<Term> for PathCompleter {
-    fn complete(&self, word: &str, _reader: &Reader<Term>, _start: usize, _end: usize)
+    fn complete(&self, word: &str, _reader: &Prompter<Term>, _start: usize, _end: usize)
             -> Option<Vec<Completion>> {
         Some(complete_path(word))
     }
 
-    fn word_start(&self, line: &str, end: usize, _reader: &Reader<Term>) -> usize {
+    fn word_start(&self, line: &str, end: usize, _reader: &Prompter<Term>) -> usize {
         escaped_word_start(&line[..end])
     }
 

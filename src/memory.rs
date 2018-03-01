@@ -2,16 +2,17 @@
 //!
 //! The main purpose of the in-memory terminal is for internal testing
 
-use std::cell::{Ref, RefCell};
 use std::cmp::min;
 use std::iter::repeat;
 use std::io;
 use std::mem::replace;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use chars::{ctrl, RUBOUT};
-use terminal::{CursorMode, Signal, SignalSet, Size, Terminal};
+use terminal::{
+    CursorMode, RawRead, SignalSet, Size,
+    Terminal, TerminalReader, TerminalWriter,
+};
 
 /// Default size of a `MemoryTerminal` buffer
 pub const DEFAULT_SIZE: Size = Size{
@@ -25,11 +26,12 @@ pub const DEFAULT_SIZE: Size = Size{
 /// a `MemoryTerminal` value will share the contained terminal buffer.
 #[derive(Clone, Debug)]
 pub struct MemoryTerminal {
-    inner: Rc<RefCell<Inner>>,
+    write: Arc<Mutex<Writer>>,
+    read: Arc<Mutex<Reader>>,
 }
 
 #[derive(Debug)]
-struct Inner {
+struct Writer {
     memory: Vec<char>,
     input: Vec<u8>,
     col: usize,
@@ -38,41 +40,59 @@ struct Inner {
     size: Size,
 }
 
+#[derive(Debug)]
+struct Reader {
+    input: Vec<u8>,
+    resize: Option<Size>,
+}
+
+/// Holds the lock on read operations of a `MemoryTerminal`.
+pub struct MemoryReadGuard<'a>(MutexGuard<'a, Reader>);
+
+/// Holds the lock on write operations of a `MemoryTerminal`.
+pub struct MemoryWriteGuard<'a>(MutexGuard<'a, Writer>);
+
 impl MemoryTerminal {
-    /// Returns a new `MemoryTerminal` with the given buffer size
+    /// Returns a new `MemoryTerminal` with the default buffer size.
+    pub fn new() -> MemoryTerminal {
+        MemoryTerminal::default()
+    }
+
+    /// Returns a new `MemoryTerminal` with the given buffer size.
     ///
     /// # Panics
     ///
     /// If either of the `lines` or `columns` fields are `0`.
     pub fn with_size(size: Size) -> MemoryTerminal {
         MemoryTerminal{
-            inner: Rc::new(RefCell::new(Inner::new(size))),
+            read: Arc::new(Mutex::new(Reader::new())),
+            write: Arc::new(Mutex::new(Writer::new(size))),
         }
     }
 
     /// Clears the terminal buffer and places the cursor at `(0, 0)`.
     pub fn clear_all(&self) {
-        self.inner.borrow_mut().clear_all();
+        self.lock_writer().clear_all();
     }
 
     /// Clears all characters beginning at the cursor and ending at buffer end.
     pub fn clear_to_end(&self) {
-        self.inner.borrow_mut().clear_to_end();
+        self.lock_writer().clear_to_end();
     }
 
     /// Clears the input buffer.
     pub fn clear_input(&self) {
-        self.inner.borrow_mut().clear_input();
+        self.lock_reader().clear_input();
     }
 
     /// Returns whether any input remains to be read.
     pub fn has_input(&self) -> bool {
-        !self.inner.borrow().input.is_empty()
+        self.lock_reader().has_input()
     }
 
     /// Returns an iterator over lines in the buffer.
     ///
-    /// # Note
+    /// # Notes
     ///
     /// The returned iterator immutably borrows the contents of the
     /// `MemoryTerminal`. Attempting to perform a mutating operation on the
@@ -80,44 +100,44 @@ impl MemoryTerminal {
     /// a panic.
     pub fn lines(&self) -> Lines {
         Lines{
-            inner: self.inner.borrow(),
+            writer: self.lock_writer(),
             line: 0,
         }
     }
 
     /// Moves the cursor up `n` cells.
     pub fn move_up(&self, n: usize) {
-        self.inner.borrow_mut().move_up(n);
+        self.lock_writer().move_up(n);
     }
 
     /// Moves the cursor down `n` cells.
     pub fn move_down(&self, n: usize) {
-        self.inner.borrow_mut().move_down(n);
+        self.lock_writer().move_down(n);
     }
 
     /// Moves the cursor left `n` cells.
     pub fn move_left(&self, n: usize) {
-        self.inner.borrow_mut().move_left(n);
+        self.lock_writer().move_left(n);
     }
 
     /// Moves the cursor right `n` cells.
     pub fn move_right(&self, n: usize) {
-        self.inner.borrow_mut().move_right(n);
+        self.lock_writer().move_right(n);
     }
 
     /// Moves the cursor to the first column of the current line.
-    pub fn move_to_first_col(&self) {
-        self.inner.borrow_mut().col = 0;
+    pub fn move_to_first_column(&self) {
+        self.lock_writer().move_to_first_column()
     }
 
     /// Pushes a character sequence to the back of the input queue.
     pub fn push_input(&self, s: &str) {
-        self.inner.borrow_mut().push_input(s.as_bytes());
+        self.lock_reader().push_input(s.as_bytes());
     }
 
     /// Reads some input from the input buffer.
     pub fn read_input(&self, buf: &mut [u8]) -> usize {
-        self.inner.borrow_mut().read_input(buf)
+        self.lock_reader().read_input(buf)
     }
 
     /// Changes the size of the terminal buffer.
@@ -128,34 +148,35 @@ impl MemoryTerminal {
     /// If either of the `lines` or `columns` fields are `0` or if the area
     /// exceeds `usize` maximum.
     pub fn resize(&self, new_size: Size) {
-        self.inner.borrow_mut().resize(new_size);
+        self.lock_writer().resize(new_size);
+        self.lock_reader().resize(new_size);
     }
 
     /// Moves the contents of the buffer up `n` lines.
     /// The first `n` lines of text will be erased.
     pub fn scroll_up(&self, n: usize) {
-        self.inner.borrow_mut().scroll_up(n);
+        self.lock_writer().scroll_up(n);
     }
 
     /// Returns the `(line, column)` position of the cursor.
     pub fn cursor(&self) -> (usize, usize) {
-        let r = self.inner.borrow();
+        let r = self.lock_writer();
         (r.line, r.col)
     }
 
     /// Sets the cursor mode.
     pub fn set_cursor_mode(&self, mode: CursorMode) {
-        self.inner.borrow_mut().cursor_mode = mode;
+        self.lock_writer().set_cursor_mode(mode);
     }
 
     /// Returns the cursor mode.
     pub fn cursor_mode(&self) -> CursorMode {
-        self.inner.borrow().cursor_mode
+        self.lock_writer().cursor_mode()
     }
 
     /// Returns the size of the terminal buffer.
     pub fn size(&self) -> Size {
-        self.inner.borrow().size
+        self.lock_writer().size
     }
 
     /// Writes some text into the buffer.
@@ -163,7 +184,15 @@ impl MemoryTerminal {
     /// If the text extends beyond the length of the current line without a
     /// newline character (`'\n'`), the extraneous text will be dropped.
     pub fn write(&self, s: &str) {
-        self.inner.borrow_mut().write(s);
+        self.lock_writer().write(s);
+    }
+
+    fn lock_reader(&self) -> MutexGuard<Reader> {
+        self.read.lock().unwrap()
+    }
+
+    fn lock_writer(&self) -> MutexGuard<Writer> {
+        self.write.lock().unwrap()
     }
 }
 
@@ -173,14 +202,47 @@ impl Default for MemoryTerminal {
     }
 }
 
-impl Inner {
-    fn new(size: Size) -> Inner {
+impl Reader {
+    fn new() -> Reader {
+        Reader{
+            input: Vec::new(),
+            resize: None,
+        }
+    }
+
+    fn has_input(&mut self) -> bool {
+        self.resize.is_some() || !self.input.is_empty()
+    }
+
+    fn clear_input(&mut self) {
+        self.input.clear();
+    }
+
+    fn push_input(&mut self, bytes: &[u8]) {
+        self.input.extend(bytes);
+    }
+
+    fn read_input(&mut self, buf: &mut [u8]) -> usize {
+        let n = min(buf.len(), self.input.len());
+
+        buf[..n].copy_from_slice(&self.input[..n]);
+        let _ = self.input.drain(..n);
+        n
+    }
+
+    fn resize(&mut self, size: Size) {
+        self.resize = Some(size);
+    }
+}
+
+impl Writer {
+    fn new(size: Size) -> Writer {
         assert!(size.lines != 0 && size.columns != 0,
             "zero-area terminal buffer: {:?}", size);
 
         let n_chars = size.lines * size.columns;
 
-        Inner{
+        Writer{
             memory: vec![' '; n_chars],
             input: Vec::new(),
             col: 0,
@@ -206,10 +268,6 @@ impl Inner {
         }
     }
 
-    fn clear_input(&mut self) {
-        self.input.clear();
-    }
-
     fn move_up(&mut self, n: usize) {
         self.line = self.line.saturating_sub(n);
     }
@@ -226,16 +284,8 @@ impl Inner {
         self.col = min(self.size.columns - 1, self.col + n);
     }
 
-    fn push_input(&mut self, bytes: &[u8]) {
-        self.input.extend(bytes);
-    }
-
-    fn read_input(&mut self, buf: &mut [u8]) -> usize {
-        let n = min(buf.len(), self.input.len());
-
-        buf[..n].copy_from_slice(&self.input[..n]);
-        let _ = self.input.drain(..n);
-        n
+    fn move_to_first_column(&mut self) {
+        self.col = 0;
     }
 
     fn resize(&mut self, new_size: Size) {
@@ -279,10 +329,20 @@ impl Inner {
         self.line = self.line.saturating_sub(n);
     }
 
+    fn set_cursor_mode(&mut self, mode: CursorMode) {
+        self.cursor_mode = mode;
+    }
+
+    fn cursor_mode(&self) -> CursorMode {
+        self.cursor_mode
+    }
+
     fn write(&mut self, s: &str) {
         for ch in s.chars() {
             if ch == '\n' {
                 self.advance_line();
+            } else if ch == '\r' {
+                self.col = 0;
             } else {
                 self.write_char(ch);
             }
@@ -315,105 +375,71 @@ impl Inner {
 /// Note that while this value behaves as an iterator, it cannot implement
 /// the `Iterator` trait because its yielded values borrow `self`.
 pub struct Lines<'a> {
-    inner: Ref<'a, Inner>,
+    writer: MutexGuard<'a, Writer>,
     line: usize,
 }
 
 impl<'a> Lines<'a> {
     /// Returns the next line in the buffer.
     pub fn next(&mut self) -> Option<&[char]> {
-        if self.line >= self.inner.size.lines {
+        if self.line >= self.writer.size.lines {
             None
         } else {
-            let start = self.inner.size.columns * self.line;
+            let start = self.writer.size.columns * self.line;
             self.line += 1;
-            let end = self.inner.size.columns * self.line;
+            let end = self.writer.size.columns * self.line;
 
-            Some(&self.inner.memory[start..end])
+            Some(&self.writer.memory[start..end])
         }
     }
 
     /// Returns the number of lines remaining in the iterator.
     pub fn lines_remaining(&self) -> usize {
-        self.inner.size.lines - self.line
+        self.writer.size.lines - self.line
     }
 }
 
 impl Terminal for MemoryTerminal {
     // No preparation needed for in-memory terminal
-    type PrepareGuard = ();
+    type PrepareState = ();
+    //type Reader = MemoryReadGuard;
+    //type Writer = MemoryWriteGuard;
 
-    fn new() -> io::Result<MemoryTerminal> {
-        Ok(MemoryTerminal::default())
+    fn name(&self) -> &str { "memory-terminal" }
+
+    fn lock_read<'a>(&'a self) -> Box<TerminalReader<Self> + 'a> {
+        Box::new(MemoryReadGuard(self.lock_reader()))
     }
 
-    fn eof_char(&self) -> char          { ctrl('D') }
-    fn literal_char(&self) -> char      { ctrl('V') }
-    fn erase_char(&self) -> char        { RUBOUT }
-    fn word_erase_char(&self) -> char   { ctrl('W') }
-    fn kill_char(&self) -> char         { ctrl('U') }
+    fn lock_write<'a>(&'a self) -> Box<TerminalWriter<Self> + 'a> {
+        Box::new(MemoryWriteGuard(self.lock_writer()))
+    }
+}
 
-    fn delete_seq(&self) -> &str { "\x1b[0~" }
-    fn insert_seq(&self) -> &str { "\x1b[1~" }
-
-    fn name(&self) -> Option<&str> { None }
-
-    fn size(&self) -> io::Result<Size> {
-        Ok(self.size())
+impl<'a> TerminalReader<MemoryTerminal> for MemoryReadGuard<'a> {
+    fn wait_for_input(&mut self, _timeout: Option<Duration>) -> io::Result<bool> {
+        Ok(!self.0.input.is_empty())
     }
 
-    fn clear_screen(&self) -> io::Result<()> {
-        self.clear_all();
-        Ok(())
-    }
+    fn prepare(&mut self, _block_signals: bool, _report_signals: SignalSet)
+            -> io::Result<()> { Ok(()) }
 
-    fn clear_to_screen_end(&self) -> io::Result<()> {
-        self.clear_to_end();
-        Ok(())
-    }
+    unsafe fn prepare_with_lock(&mut self,
+            _lock: &mut TerminalWriter<MemoryTerminal>,
+            _block_signals: bool, _report_signals: SignalSet)
+            -> io::Result<()> { Ok(()) }
 
-    fn move_up(&self, n: usize) -> io::Result<()> {
-        self.move_up(n);
-        Ok(())
-    }
+    fn restore(&mut self, _state: ()) -> io::Result<()> { Ok(()) }
 
-    fn move_down(&self, n: usize) -> io::Result<()> {
-        self.move_down(n);
-        Ok(())
-    }
+    unsafe fn restore_with_lock(&mut self,
+            _lock: &mut TerminalWriter<MemoryTerminal>, _state: ())
+            -> io::Result<()> { Ok(()) }
 
-    fn move_left(&self, n: usize) -> io::Result<()> {
-        self.move_left(n);
-        Ok(())
-    }
+    fn read(&mut self, buf: &mut Vec<u8>) -> io::Result<RawRead> {
+        if let Some(size) = self.0.resize.take() {
+            return Ok(RawRead::Resize(size));
+        }
 
-    fn move_right(&self, n: usize) -> io::Result<()> {
-        self.move_right(n);
-        Ok(())
-    }
-
-    fn move_to_first_col(&self) -> io::Result<()> {
-        self.move_to_first_col();
-        Ok(())
-    }
-
-    fn set_cursor_mode(&self, mode: CursorMode) -> io::Result<()> {
-        self.set_cursor_mode(mode);
-        Ok(())
-    }
-
-    fn wait_for_input(&self, _timeout: Option<Duration>) -> io::Result<bool> {
-        Ok(self.has_input())
-    }
-
-    fn prepare(&self, _catch_signals: bool, _report_signals: SignalSet)
-        -> io::Result<()> { Ok(()) }
-    fn read_signals(&self) -> io::Result<()> { Ok(()) }
-
-    fn get_signal(&self) -> Option<Signal> { None }
-    fn take_signal(&self) -> Option<Signal> { None }
-
-    fn read(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
         buf.reserve(16);
 
         let cap = buf.capacity();
@@ -422,17 +448,65 @@ impl Terminal for MemoryTerminal {
 
         unsafe {
             buf.set_len(cap);
-            n = self.read_input(&mut buf[len..]);
+            n = self.0.read_input(&mut buf[len..]);
             buf.set_len(len + n);
         }
 
-        Ok(n)
+        Ok(RawRead::Bytes(n))
+    }
+}
+
+impl<'a> TerminalWriter<MemoryTerminal> for MemoryWriteGuard<'a> {
+    fn size(&self) -> io::Result<Size> {
+        Ok(self.0.size)
     }
 
-    fn write(&self, s: &str) -> io::Result<()> {
-        self.write(s);
+    fn clear_screen(&mut self) -> io::Result<()> {
+        self.0.clear_all();
         Ok(())
     }
+
+    fn clear_to_screen_end(&mut self) -> io::Result<()> {
+        self.0.clear_to_end();
+        Ok(())
+    }
+
+    fn move_up(&mut self, n: usize) -> io::Result<()> {
+        self.0.move_up(n);
+        Ok(())
+    }
+
+    fn move_down(&mut self, n: usize) -> io::Result<()> {
+        self.0.move_down(n);
+        Ok(())
+    }
+
+    fn move_left(&mut self, n: usize) -> io::Result<()> {
+        self.0.move_left(n);
+        Ok(())
+    }
+
+    fn move_right(&mut self, n: usize) -> io::Result<()> {
+        self.0.move_right(n);
+        Ok(())
+    }
+
+    fn move_to_first_column(&mut self) -> io::Result<()> {
+        self.0.move_to_first_column();
+        Ok(())
+    }
+
+    fn set_cursor_mode(&mut self, mode: CursorMode) -> io::Result<()> {
+        self.0.set_cursor_mode(mode);
+        Ok(())
+    }
+
+    fn write(&mut self, s: &str) -> io::Result<()> {
+        self.0.write(s);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
 #[cfg(test)]
@@ -447,7 +521,7 @@ mod test {
         while let Some(line) = lines.next() {
             let test = test_iter.next().unwrap();
             assert!(line.iter().cloned().eq(test.chars()),
-                "mem: {:?}; tests: {:?}", mem.inner.borrow().memory, tests);
+                "mem: {:?}; tests: {:?}", mem.lock_writer().memory, tests);
         }
     }
 
@@ -484,12 +558,12 @@ mod test {
         mem.write("\nabcd");
         assert_lines(&mem, &["xyz ", "abcd", "    "]);
 
-        mem.move_to_first_col();
+        mem.move_to_first_column();
         mem.write("ab");
         mem.clear_to_end();
         assert_lines(&mem, &["xyz ", "ab  ", "    "]);
 
-        mem.move_to_first_col();
+        mem.move_to_first_column();
         mem.move_down(1);
         mem.write("c");
         mem.move_right(1);

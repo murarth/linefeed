@@ -1,23 +1,26 @@
 extern crate linefeed;
 
-use std::rc::Rc;
+use std::io;
+use std::sync::Arc;
 
-use linefeed::{Reader, ReadResult};
+use linefeed::{Interface, ReadResult};
 use linefeed::complete::PathCompleter;
 
-fn main() {
-    let mut reader = Reader::new("path-completion-demo").unwrap();
+fn main() -> io::Result<()> {
+    let interface = Interface::new("path-completion-demo")?;
 
-    reader.set_completer(Rc::new(PathCompleter));
-    reader.set_prompt("path> ");
+    interface.set_completer(Arc::new(PathCompleter));
+    interface.set_prompt("path> ");
 
-    while let Ok(ReadResult::Input(line)) = reader.read_line() {
+    while let ReadResult::Input(line) = interface.read_line()? {
         println!("read input: {:?}", line);
 
         if !line.trim().is_empty() {
-            reader.add_history(line);
+            interface.add_history(line);
         }
     }
 
     println!("Goodbye.");
+
+    Ok(())
 }

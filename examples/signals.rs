@@ -1,25 +1,26 @@
 extern crate linefeed;
 
-use linefeed::{Reader, ReadResult, Signal};
+use std::io;
 
-fn main() {
-    let mut reader = Reader::new("signal-demo").unwrap();
+use linefeed::{Interface, ReadResult, Signal};
 
-    reader.set_prompt("signals> ");
+fn main() -> io::Result<()> {
+    let interface = Interface::new("signal-demo")?;
+
+    interface.set_prompt("signals> ");
 
     // Report all signals to application
-    reader.set_report_signal(Signal::Break, true);
-    reader.set_report_signal(Signal::Continue, true);
-    reader.set_report_signal(Signal::Interrupt, true);
-    reader.set_report_signal(Signal::Suspend, true);
-    reader.set_report_signal(Signal::Quit, true);
+    interface.set_report_signal(Signal::Break, true);
+    interface.set_report_signal(Signal::Continue, true);
+    interface.set_report_signal(Signal::Interrupt, true);
+    interface.set_report_signal(Signal::Suspend, true);
+    interface.set_report_signal(Signal::Quit, true);
 
-    while let Ok(res) = reader.read_line() {
+    loop {
+        let res = interface.read_line()?;
+
         match res {
-            ReadResult::Eof => {
-                println!("");
-                break;
-            }
+            ReadResult::Eof => break,
             ReadResult::Input(line) => {
                 let mut words = line.split_whitespace();
 
@@ -36,10 +37,10 @@ fn main() {
                     }
                     Some("show") => {
                         for &sig in SIGNALS {
-                            if reader.ignore_signal(sig) {
+                            if interface.ignore_signal(sig) {
                                 println!("ignoring {:?}", sig);
                             }
-                            if reader.report_signal(sig) {
+                            if interface.report_signal(sig) {
                                 println!("reporting {:?}", sig);
                             }
                         }
@@ -47,7 +48,7 @@ fn main() {
                     Some("report") => {
                         for name in words {
                             if let Some(sig) = signal_by_name(name) {
-                                reader.set_report_signal(sig, true);
+                                interface.set_report_signal(sig, true);
                                 println!("reporting signal {:?}", sig);
                             }
                         }
@@ -55,7 +56,7 @@ fn main() {
                     Some("-report") => {
                         for name in words {
                             if let Some(sig) = signal_by_name(name) {
-                                reader.set_report_signal(sig, false);
+                                interface.set_report_signal(sig, false);
                                 println!("not reporting signal {:?}", sig);
                             }
                         }
@@ -63,7 +64,7 @@ fn main() {
                     Some("ignore") => {
                         for name in words {
                             if let Some(sig) = signal_by_name(name) {
-                                reader.set_ignore_signal(sig, true);
+                                interface.set_ignore_signal(sig, true);
                                 println!("ignoring signal {:?}", sig);
                             }
                         }
@@ -71,7 +72,7 @@ fn main() {
                     Some("-ignore") => {
                         for name in words {
                             if let Some(sig) = signal_by_name(name) {
-                                reader.set_ignore_signal(sig, false);
+                                interface.set_ignore_signal(sig, false);
                                 println!("not ignoring signal {:?}", sig);
                             }
                         }
@@ -80,14 +81,15 @@ fn main() {
                 }
             }
             ReadResult::Signal(sig) => {
-                println!("");
                 println!("signal received: {:?}", sig);
             }
         }
     }
+
+    Ok(())
 }
 
-const SIGNALS: &'static [Signal] = &[
+const SIGNALS: &[Signal] = &[
     Signal::Break,
     Signal::Continue,
     Signal::Interrupt,

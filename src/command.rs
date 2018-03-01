@@ -18,7 +18,7 @@ macro_rules! define_commands {
         }
 
         /// List of all command names
-        pub static COMMANDS: &'static [&'static str] = &[ $( $str ),+ ];
+        pub static COMMANDS: &[&str] = &[ $( $str ),+ ];
 
         impl fmt::Display for Command {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

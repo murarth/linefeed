@@ -1,6 +1,6 @@
 # `linefeed`
 
-`linefeed` is a configurable, extensible, interactive input reader
+`linefeed` is a configurable, concurrent, extensible, interactive input reader
 for Unix terminals and Windows console.
 
 [API Documentation](https://docs.rs/linefeed/)
@@ -24,10 +24,6 @@ To include `linefeed` in your project, add the following to your `Cargo.toml`:
 [dependencies]
 linefeed = "0.4"
 ```
-
-### Dependencies
-
-On Unix systems, `linefeed` requires `libncursesw` (`libncurses` on Mac OS X).
 
 ### Demo
 

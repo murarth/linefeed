@@ -1,33 +1,35 @@
 extern crate linefeed;
 
 use std::io;
-use std::rc::Rc;
+use std::sync::Arc;
 
-use linefeed::{Command, Function, Reader, ReadResult, Terminal};
+use linefeed::{Command, Function, Interface, Prompter, ReadResult, Terminal};
 
-const DEMO_FN_SEQ: &'static str = "\x18d"; // Ctrl-X, d
+const DEMO_FN_SEQ: &str = "\x18d"; // Ctrl-X, d
 
-fn main() {
-    let mut reader = Reader::new("function-demo").unwrap();
+fn main() -> io::Result<()> {
+    let interface = Interface::new("function-demo")?;
 
-    reader.set_prompt("fn-demo> ");
+    interface.set_prompt("fn-demo> ");
 
-    reader.define_function("demo-function", Rc::new(DemoFunction));
+    interface.define_function("demo-function", Arc::new(DemoFunction));
 
-    reader.bind_sequence(DEMO_FN_SEQ, Command::from_str("demo-function"));
+    interface.bind_sequence(DEMO_FN_SEQ, Command::from_str("demo-function"));
 
-    while let Ok(ReadResult::Input(line)) = reader.read_line() {
+    while let ReadResult::Input(line) = interface.read_line()? {
         println!("read input: {:?}", line);
     }
 
     println!("Goodbye.");
+
+    Ok(())
 }
 
 struct DemoFunction;
 
 impl<Term: Terminal> Function<Term> for DemoFunction {
-    fn execute(&self, reader: &mut Reader<Term>, _count: i32, _ch: char) -> io::Result<()> {
-        assert_eq!(reader.sequence(), DEMO_FN_SEQ);
-        reader.insert_str("<demo function executed>")
+    fn execute(&self, prompter: &mut Prompter<Term>, _count: i32, _ch: char) -> io::Result<()> {
+        assert_eq!(prompter.sequence(), DEMO_FN_SEQ);
+        prompter.insert_str("<demo function executed>")
     }
 }
