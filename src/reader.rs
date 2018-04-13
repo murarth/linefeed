@@ -5,7 +5,8 @@ use std::cmp::{max, min};
 use std::collections::{HashMap, VecDeque};
 use std::collections::vec_deque;
 use std::fmt;
-use std::io;
+use std::fs::File;
+use std::io::{self, BufWriter, BufRead, BufReader, Write};
 use std::iter::repeat;
 use std::mem::{replace, swap};
 use std::ops::Range;
@@ -588,6 +589,29 @@ impl<Term: Terminal> Reader<Term> {
     /// Returns the defined function.
     pub fn remove_function(&mut self, name: &str) -> Option<Rc<Function<Term>>> {
         self.functions.remove(name)
+    }
+
+    /// Save history to the specified file
+    ///
+    pub fn save_history<P: AsRef<Path> + ?Sized>(&self, path: &P) -> io::Result<()> {
+        let file = File::create(path)?;
+        let mut wtr = BufWriter::new(file);
+        for entry in &self.history {
+            wtr.write_all(entry.as_bytes())?;
+            wtr.write_all(b"\n")?;
+        }
+        Ok(())
+    }
+
+    /// Load the history from the specified file. Returns `Ok()` if file is not found.
+    ///
+    pub fn load_history<P: AsRef<Path> + ?Sized>(&mut self, path: &P) -> io::Result<()> {
+        let file = File::open(&path)?;
+        let rdr = BufReader::new(file);
+        for line in rdr.lines() {
+            self.add_history(line?);
+        }
+        Ok(())
     }
 
     /// Adds a line to history.
