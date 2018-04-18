@@ -18,6 +18,8 @@ use std::sync::Arc;
 use std::sync::mpsc::{Sender, Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
+use parking_lot::RwLock;
+
 use chars::{is_ctrl, unctrl, is_printable, DELETE, ESCAPE, RUBOUT};
 use command::{Category, Command};
 use complete::{Completer, Completion, DummyCompleter};
@@ -66,28 +68,34 @@ pub enum ReadResult {
     Signal(Signal),
 }
 
+enum ReceiverMessage {
+    LogMessage(String),
+    Interrupt,
+}
+
 struct LogReceiver {
-    send_counter: Arc<()>,
-    receive_handle: Receiver<String>,
-    send_handle: Sender<String>,
+    /// Note that this variable also serves to count the number of open receivers.
+    is_receiver_closed: Arc<RwLock<bool>>,
+    receive_handle: Receiver<ReceiverMessage>,
+    send_handle: Sender<ReceiverMessage>,
 }
 impl LogReceiver {
     fn new() -> LogReceiver {
         let (send_handle, receive_handle) = channel();
         LogReceiver {
-            send_counter: Arc::new(()), receive_handle, send_handle,
+            is_receiver_closed: Arc::new(RwLock::new(false)), receive_handle, send_handle,
         }
     }
 
     fn is_dead(&mut self) -> bool {
         // The only way there's only one instance of the Arc is if all other
         // connections are dead.
-        Arc::strong_count(&self.send_counter) == 1
+        Arc::strong_count(&self.is_receiver_closed) == 1
     }
 
-    fn receive(&self) -> Option<String> {
+    fn receive(&self) -> Option<ReceiverMessage> {
         match self.receive_handle.try_recv() {
-            Ok(str) => Some(str),
+            Ok(msg) => Some(msg),
             Err(TryRecvError::Empty) => None,
             // This should never happen as we store a Sender in this object.
             Err(TryRecvError::Disconnected) => unreachable!(),
@@ -96,9 +104,13 @@ impl LogReceiver {
 
     fn new_sender(&self) -> LogSender {
         LogSender {
-            _send_counter: self.send_counter.clone(),
+            is_receiver_closed: self.is_receiver_closed.clone(),
             send_handle: self.send_handle.clone(),
         }
+    }
+
+    fn kill_senders(&self) {
+        *self.is_receiver_closed.write() = true;
     }
 }
 
@@ -106,18 +118,68 @@ impl LogReceiver {
 /// causing display errors in a currently open prompt.
 #[derive(Clone)]
 pub struct LogSender {
-    _send_counter: Arc<()>,
-    send_handle: Sender<String>,
+    is_receiver_closed: Arc<RwLock<bool>>,
+    send_handle: Sender<ReceiverMessage>,
 }
 impl LogSender {
-    /// Writes a format to the prompt. If the Reader has been closed, this
-    /// function returns an error.
-    pub fn write_fmt(&self, args: fmt::Arguments) -> io::Result<()> {
-        if let Err(_) = self.send_handle.send(format!("{}", args)) {
-            Err(io::Error::new(io::ErrorKind::ConnectionReset,
-                               "Reader has already been closed."))
+    fn sender_closed() -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::ConnectionReset,
+                           "Reader has already been closed."))
+    }
+
+    fn synchronize_send<F>(&self, message: F) -> io::Result<()>
+        where F: FnOnce() -> ReceiverMessage {
+
+        // We keep this read lock open until the send finishes, so that
+        // `kill_senders` will wait for all `synchronized_send`s calls
+        // to actually send their messages before returning.
+        let is_receiver_closed = self.is_receiver_closed.read();
+
+        if *is_receiver_closed {
+            LogSender::sender_closed()
+        } else if let Err(_) = self.send_handle.send(message()) {
+            LogSender::sender_closed()
         } else {
             Ok(())
+        }
+    }
+
+    /// Attempts to interrupt the prompt, returning control to the thread
+    /// that originally called a method on `Reader`. If the `Reader` has
+    /// been dropped or `stop_log_senders` has been called on the `Reader`,
+    /// this function returns an error.
+    ///
+    /// When read_line is interrupted, it will return an `Error` with an
+    /// `ErrorKind` of `ErrorKind::Interrupted`, and `reader.was_interrupted()`
+    /// will return true.
+    ///
+    /// This function is meant for graceful shutdown of a multithreaded
+    /// program. Currently, an interrupted prompt cannot be resumed, and
+    /// any user input will be lost when a new prompt is created.
+    pub fn interrupt(&self) -> io::Result<()> {
+        self.synchronize_send(|| ReceiverMessage::Interrupt)
+    }
+
+    /// Writes a format to the prompt. If the `Reader` has been dropped or
+    /// `stop_log_senders` has been called on the `Reader`, this function
+    /// returns an error.
+    pub fn write_fmt(&self, args: fmt::Arguments) -> io::Result<()> {
+        self.synchronize_send(move || ReceiverMessage::LogMessage(format!("{}", args)))
+    }
+}
+
+/// An iterator for messages not yet processed by a `Reader` after stopping it.
+pub struct LogIter(Option<LogReceiver>);
+impl Iterator for LogIter {
+    type Item = String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.0.as_ref().and_then(|x| x.receive()) {
+                Some(ReceiverMessage::LogMessage(msg)) => return Some(msg),
+                Some(ReceiverMessage::Interrupt) => { }
+                None => return None,
+            }
         }
     }
 }
@@ -224,6 +286,7 @@ pub struct Reader<Term: Terminal> {
 
     log_channel: Option<LogReceiver>,
     poll_log_interval: Duration,
+    was_interrupted: bool,
 }
 
 impl Reader<DefaultTerminal> {
@@ -320,6 +383,7 @@ impl<Term: Terminal> Reader<Term> {
 
             log_channel: None,
             poll_log_interval: Duration::from_millis(POLL_LOG_INTERVAL_MS),
+            was_interrupted: false,
         };
 
         r.read_init();
@@ -441,6 +505,8 @@ impl<Term: Terminal> Reader<Term> {
         self.last_yank = None;
 
         self.screen_size = self.term.size()?;
+
+        self.was_interrupted = false;
 
         Ok(())
     }
@@ -1793,7 +1859,7 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     /// Gets the next line in the receiver if one exists. Otherwise, it returns `None`.
-    fn receive_next(&mut self) -> Option<String> {
+    fn receive_next(&mut self) -> Option<ReceiverMessage> {
         let raw_recv = self.log_channel.as_ref().and_then(|c| c.receive());
         if raw_recv.is_none() && self.log_channel.as_mut().map_or(false, |x| x.is_dead()) {
             self.log_channel = None;
@@ -2303,7 +2369,7 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     /// Draws the prompt and current input, assuming the cursor is at column 0
-    fn draw_prompt_no_receive(&self) -> io::Result<()> {
+    fn draw_prompt_raw(&self) -> io::Result<()> {
         self.draw_raw_prompt(&self.prompt_prefix)?;
 
         match self.prompt_type {
@@ -2336,29 +2402,81 @@ impl<Term: Terminal> Reader<Term> {
         self.move_from(self.buffer.len())
     }
 
-    /// If logs were received, prints them then redraws the prompt.
-    fn check_received_logs(&mut self) -> io::Result<()> {
-        let mut text_written = false;
-        while let Some(text) = self.receive_next() {
-            if !text_written {
-                self.clear_prompt()?;
-                text_written = true;
+    /// Draws/redraws a prompt and any logs received from a `LogSender`.
+    fn draw_prompt_and_logs(&mut self, mut is_prompt_open: bool, end_with_open_prompt: bool,
+                            can_interrupt: bool) -> io::Result<bool> {
+        let mut interrupted = false;
+
+        while let Some(value) = self.receive_next() {
+            match value {
+                ReceiverMessage::LogMessage(text) => {
+                    if is_prompt_open {
+                        self.clear_prompt()?;
+                        is_prompt_open = false;
+                    }
+                    self.draw_text(0, &text)?;
+                }
+                ReceiverMessage::Interrupt => {
+                    if can_interrupt {
+                        interrupted = true;
+                        break;
+                    }
+                }
             }
-            self.draw_text(0, &text)?;
         }
-        if text_written {
-            self.draw_prompt_no_receive()?;
+
+        if interrupted {
+            if is_prompt_open {
+                let end = self.buffer.len();
+                self.move_to(end)?;
+                self.term.write("\n")?;
+            }
+        } else {
+            if end_with_open_prompt && !is_prompt_open {
+                self.draw_prompt_raw()?;
+            }
+            if !end_with_open_prompt && is_prompt_open {
+                self.clear_prompt()?;
+            }
         }
+
+        Ok(interrupted)
+    }
+
+    fn check_interrupt(&mut self, result: io::Result<bool>) -> io::Result<()> {
+        if result? {
+            self.was_interrupted = true;
+            Err(io::Error::new(io::ErrorKind::Interrupted,
+                               "Reader interrupted from a LogSender"))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Return whether the last call to `read_line` was interrupted by a
+    /// `LogSender`.
+    pub fn was_interrupted(&self) -> bool {
+        self.was_interrupted
+    }
+
+    /// Prints logs received from a `LogSender` to the screen.
+    pub fn print_received_logs(&mut self) -> io::Result<()> {
+        self.draw_prompt_and_logs(false, false, false)?;
         Ok(())
+    }
+
+    /// If logs were received, prints them then redraws the prompt, assuming a
+    /// prompt is open.
+    fn check_received_logs(&mut self) -> io::Result<()> {
+        let result = self.draw_prompt_and_logs(true, true, true);
+        self.check_interrupt(result)
     }
 
     /// Prints received logs, then draws the prompt and current input, assuming
     /// the cursor is at column 0
     fn draw_prompt(&mut self) -> io::Result<()> {
-        while let Some(text) = self.receive_next() {
-            self.draw_text(0, &text)?;
-        }
-        self.draw_prompt_no_receive()
+        let result = self.draw_prompt_and_logs(false, true, true);
+        self.check_interrupt(result)
     }
 
     fn redraw_prompt(&mut self, new_prompt: PromptType) -> io::Result<()> {
@@ -2846,7 +2964,7 @@ impl<Term: Terminal> Reader<Term> {
         self.word_break = chars.into();
     }
 
-    /// Creaes a sender object that allows other threads to log messages while
+    /// Creates a sender object that allows other threads to log messages while
     /// a prompt is open, without causing display errors. The `Reader` handles
     /// checking the buffer, so unless `read_line` or a similar function is
     /// running in the Reader, the messages sent will not be printed.
@@ -2859,6 +2977,19 @@ impl<Term: Terminal> Reader<Term> {
             self.log_channel = Some(receiver);
             sender
         }
+    }
+
+    /// Stops receiving messages from all sender objects created by
+    /// `get_log_sender` so far. Any further calls on existing `LogSender`s
+    /// will return an error.
+    ///
+    /// This function returns an iterator over all remaining messages that
+    /// this `Reader` has not yet processed.
+    pub fn stop_log_senders(&mut self) -> LogIter {
+        LogIter(self.log_channel.take().map(|x| {
+            x.kill_senders();
+            x
+        }))
     }
 
     /// Returns the interval at which `Reader` checks for log messages while

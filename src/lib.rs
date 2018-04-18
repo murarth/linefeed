@@ -19,6 +19,7 @@
 #![deny(missing_docs)]
 
 extern crate libc;
+extern crate parking_lot;
 extern crate unicode_normalization;
 extern crate unicode_width;
 #[cfg(unix)] extern crate nix;
