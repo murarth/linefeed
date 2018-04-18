@@ -591,8 +591,7 @@ impl<Term: Terminal> Reader<Term> {
         self.functions.remove(name)
     }
 
-    /// Save history to the specified file
-    ///
+    /// Save history entries to the specified file.
     pub fn save_history<P: AsRef<Path> + ?Sized>(&self, path: &P) -> io::Result<()> {
         let file = File::create(path)?;
         let mut wtr = BufWriter::new(file);
@@ -603,8 +602,7 @@ impl<Term: Terminal> Reader<Term> {
         wtr.flush()
     }
 
-    /// Load the history from the specified file. Returns `Ok()` if file is not found.
-    ///
+    /// Load history entries from the specified file.
     pub fn load_history<P: AsRef<Path> + ?Sized>(&mut self, path: &P) -> io::Result<()> {
         let file = File::open(&path)?;
         let rdr = BufReader::new(file);
