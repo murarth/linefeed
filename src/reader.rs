@@ -600,7 +600,7 @@ impl<Term: Terminal> Reader<Term> {
             wtr.write_all(entry.as_bytes())?;
             wtr.write_all(b"\n")?;
         }
-        Ok(())
+        wtr.flush()
     }
 
     /// Load the history from the specified file. Returns `Ok()` if file is not found.
