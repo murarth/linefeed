@@ -13,6 +13,8 @@ use linefeed::inputrc::parse_text;
 use linefeed::terminal::Terminal;
 use rand::{Rng, weak_rng};
 
+const HISTORY_FILE: &str = "linefeed.hst";
+
 fn main() {
     let mut reader = Reader::new("demo").unwrap();
 
@@ -23,6 +25,13 @@ fn main() {
 
     reader.set_completer(Rc::new(DemoCompleter));
     reader.set_prompt("demo> ");
+    if let Err(e) = reader.load_history(HISTORY_FILE) {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            println!("History file {} doesn't exist, not loading history.", HISTORY_FILE);
+        } else {
+            eprintln!("Could not load history file {}: {}", HISTORY_FILE, e);
+        }
+    }
 
     let mut thread_id = 0;
     while let Ok(ReadResult::Input(line)) = reader.read_line() {
@@ -84,6 +93,18 @@ fn main() {
                 });
                 thread_id += 1;
             }
+            "history" => {
+                for (i, entry) in reader.history().enumerate() {
+                    println!("{}: {}", i, entry);
+                }
+            }
+            "save-history" => {
+                if let Err(e) = reader.save_history(HISTORY_FILE) {
+                    eprintln!("Could not save history file {}: {}", HISTORY_FILE, e);
+                } else {
+                    println!("History saved to {}", HISTORY_FILE);
+                }
+            }
             "quit" => break,
             "set" => {
                 let d = parse_text("<input>", &line);
@@ -113,6 +134,8 @@ static DEMO_COMMANDS: &'static [(&'static str, &'static str)] = &[
     ("list-commands",    "List command names"),
     ("list-variables",   "List variables"),
     ("spawn-log-thread", "Spawns a thread that concurrently logs messages"),
+    ("history",          "Print history"),
+    ("save-history",     "Write history to file"),
     ("quit",             "Quit the demo"),
     ("set",              "Assign a value to a variable"),
 ];
