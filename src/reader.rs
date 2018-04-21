@@ -163,6 +163,8 @@ pub struct Reader<Term: Terminal> {
     prompt_prefix: String,
     /// Portion of prompt after the final newline
     prompt_suffix: String,
+    /// Number of visible characters in `prompt_prefix`
+    prompt_prefix_length: usize,
     /// Number of visible characters in `prompt_suffix`
     prompt_suffix_length: usize,
 
@@ -273,6 +275,7 @@ impl<Term: Terminal> Reader<Term> {
             prompt_type: PromptType::Normal,
             prompt_prefix: String::new(),
             prompt_suffix: String::new(),
+            prompt_prefix_length: 0,
             prompt_suffix_length: 0,
 
             reverse_search: false,
@@ -445,6 +448,82 @@ impl<Term: Terminal> Reader<Term> {
         Ok(())
     }
 
+    /// Erases the prompt and current input from the terminal display.
+    ///
+    /// This method may be used to print text to the output terminal without
+    /// interfering with the prompt and user input. The caller should call
+    /// [`restore_prompt`] when finished printing text.
+    ///
+    /// This method does not clear the input buffer or modify the cursor position.
+    ///
+    /// [`restore_prompt`]: #method.restore_prompt
+    pub fn erase_prompt(&mut self) -> io::Result<()> {
+        self.clear_full_prompt()
+    }
+
+    /// Writes a string to the terminal display.
+    ///
+    /// If the line contains any unprintable characters (e.g. escape sequences),
+    /// those characters will be escaped before printing.
+    ///
+    /// # Note
+    ///
+    /// If this method is called during a [`read_line`] call, the prompt must
+    /// first be erased using the [`erase_prompt`] method. The caller should
+    /// then call [`restore_prompt`] to redraw the prompt.
+    ///
+    /// [`read_line`]: #method.read_line
+    /// [`erase_prompt`]: #method.erase_prompt
+    /// [`restore_prompt`]: #method.restore_prompt
+    pub fn write_str(&mut self, line: &str) -> io::Result<()> {
+        self.draw_text(0, line)
+    }
+
+    /// Writes formatted text to the terminal display.
+    ///
+    /// If the text contains any unprintable characters (e.g. escape sequences),
+    /// those characters will be escaped before printing.
+    ///
+    /// # Note
+    ///
+    /// If this method is called during a [`read_line`] call, the prompt must
+    /// first be erased using the [`erase_prompt`] method. The caller should
+    /// then call [`restore_prompt`] to redraw the prompt.
+    ///
+    /// [`read_line`]: #method.read_line
+    /// [`erase_prompt`]: #method.erase_prompt
+    /// [`restore_prompt`]: #method.restore_prompt
+    pub fn write_fmt(&mut self, args: fmt::Arguments) -> io::Result<()> {
+        struct Adapter<'a, T: 'a + Terminal> {
+            r: &'a mut Reader<T>,
+            err: io::Result<()>,
+        }
+
+        impl<'a, T: Terminal> fmt::Write for Adapter<'a, T> {
+            fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
+                self.r.write_str(s).map_err(|e| {
+                    self.err = Err(e);
+                    fmt::Error
+                })
+            }
+        }
+
+        let mut adapter = Adapter{r: self, err: Ok(())};
+
+        let _ = fmt::Write::write_fmt(&mut adapter, args);
+
+        adapter.err
+    }
+
+    /// Redraws the prompt and current input to the terminal display.
+    ///
+    /// This method should be called after [`erase_prompt`].
+    ///
+    /// [`erase_prompt`]: #method.erase_prompt
+    pub fn restore_prompt(&mut self) -> io::Result<()> {
+        self.draw_prompt()
+    }
+
     /// Returns the current buffer.
     pub fn buffer(&self) -> &str {
         &self.buffer
@@ -513,11 +592,17 @@ impl<Term: Terminal> Reader<Term> {
                 self.prompt_prefix = prompt[..pos + 1].to_owned();
 
                 self.prompt_suffix = prompt[pos + 1..].to_owned();
+
+                let pre_virt = filter_visible(&self.prompt_prefix);
+                self.prompt_prefix_length = self.display_size(&pre_virt, 0);
+
                 let suf_virt = filter_visible(&self.prompt_suffix);
                 self.prompt_suffix_length = self.display_size(&suf_virt, 0);
             }
             None => {
                 self.prompt_prefix.clear();
+                self.prompt_prefix_length = 0;
+
                 self.prompt_suffix = prompt.to_owned();
                 let suf_virt = filter_visible(&self.prompt_suffix);
                 self.prompt_suffix_length = self.display_size(&suf_virt, 0);
@@ -2294,10 +2379,19 @@ impl<Term: Terminal> Reader<Term> {
         Ok(())
     }
 
-    /// Erases a previously drawn prompt, and resets the cursor position.
+    /// Erases the last line of the prompt, leaving the cursor at the first column
+    /// of the screen.
     fn clear_prompt(&mut self) -> io::Result<()> {
         let (line, _) = self.line_col(self.cursor);
         self.term.move_up(line)?;
+        self.term.move_to_first_col()?;
+        self.term.clear_to_screen_end()
+    }
+
+    fn clear_full_prompt(&mut self) -> io::Result<()> {
+        let prefix_lines = self.prompt_prefix_length / self.screen_size.columns;
+        let (line, _) = self.line_col(self.cursor);
+        self.term.move_up(prefix_lines + line)?;
         self.term.move_to_first_col()?;
         self.term.clear_to_screen_end()
     }
@@ -2341,7 +2435,7 @@ impl<Term: Terminal> Reader<Term> {
         let mut text_written = false;
         while let Some(text) = self.receive_next() {
             if !text_written {
-                self.clear_prompt()?;
+                self.clear_full_prompt()?;
                 text_written = true;
             }
             self.draw_text(0, &text)?;
