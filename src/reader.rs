@@ -978,6 +978,7 @@ impl<Term: Terminal> Reader<Term> {
         match cmd {
             Abort => (),
             AcceptLine => {
+                self.move_to_end()?;
                 self.term.write("\n")?;
                 self.input_accepted = true;
             }
@@ -1193,8 +1194,7 @@ impl<Term: Terminal> Reader<Term> {
                 }
             }
             EndOfLine => {
-                let pos = self.buffer.len();
-                self.move_to(pos)?;
+                self.move_to_end()?;
             }
             BackwardDeleteChar => {
                 if n > 0 {
@@ -2165,6 +2165,11 @@ impl<Term: Terminal> Reader<Term> {
         }
 
         Ok(())
+    }
+
+    fn move_to_end(&mut self) -> io::Result<()> {
+        let pos = self.buffer.len();
+        self.move_to(pos)
     }
 
     /// Moves from `old` to `new` cursor position, using the given buffer
