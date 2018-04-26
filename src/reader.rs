@@ -1188,9 +1188,20 @@ impl<Term: Terminal> Reader<Term> {
                 self.clear_screen()?;
             }
             BeginningOfLine => self.move_to(0)?,
-            EndOfFile => {
-                if self.buffer.is_empty() {
-                    self.end_of_file = true;
+            EndOfFile if self.buffer.is_empty() => {
+                self.end_of_file = true;
+            }
+            EndOfFile | DeleteChar => {
+                if n > 0 {
+                    let pos = forward_char(n as usize,
+                        &self.buffer, self.cursor);
+                    let r = self.cursor..pos;
+                    self.delete_range(r)?;
+                } else if n < 0 {
+                    let pos = backward_char(n as usize,
+                        &self.buffer, self.cursor);
+                    let r = pos..self.cursor;
+                    self.delete_range(r)?;
                 }
             }
             EndOfLine => {
@@ -1210,19 +1221,6 @@ impl<Term: Terminal> Reader<Term> {
                     let pos = forward_char((-n) as usize,
                         &self.buffer, self.cursor);
                     let r = self.cursor..pos;
-                    self.delete_range(r)?;
-                }
-            }
-            DeleteChar => {
-                if n > 0 {
-                    let pos = forward_char(n as usize,
-                        &self.buffer, self.cursor);
-                    let r = self.cursor..pos;
-                    self.delete_range(r)?;
-                } else if n < 0 {
-                    let pos = backward_char(n as usize,
-                        &self.buffer, self.cursor);
-                    let r = pos..self.cursor;
                     self.delete_range(r)?;
                 }
             }
