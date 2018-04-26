@@ -963,7 +963,8 @@ impl<Term: Terminal> Reader<Term> {
     }
 
     fn is_abort(&self, ch: char) -> bool {
-        let s = ch.to_string();
+        let mut buf = [0; 4];
+        let s = ch.encode_utf8(&mut buf);
 
         self.find_binding(&s) == BindResult::Found(Command::Abort)
     }
