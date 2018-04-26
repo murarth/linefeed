@@ -371,8 +371,14 @@ impl<Term: Terminal> Reader<Term> {
 
             match self.prompt_type {
                 PromptType::Normal => {
-                    self.sequence.push(ch);
-                    self.execute_sequence()?;
+                    if ch == self.term.eof_char() &&
+                            self.sequence.is_empty() && self.buffer.is_empty() {
+                        self.end_of_file = true;
+                        break;
+                    } else {
+                        self.sequence.push(ch);
+                        self.execute_sequence()?;
+                    }
                 }
                 PromptType::Number => {
                     if let Some(digit) = ch.to_digit(10).map(|u| u as i32) {
@@ -1188,11 +1194,6 @@ impl<Term: Terminal> Reader<Term> {
                 self.clear_screen()?;
             }
             BeginningOfLine => self.move_to(0)?,
-            EndOfFile => {
-                if self.buffer.is_empty() {
-                    self.end_of_file = true;
-                }
-            }
             EndOfLine => {
                 self.move_to_end()?;
             }
@@ -3402,7 +3403,6 @@ fn default_bindings<Term: Terminal>(term: &Term) -> Vec<(Cow<'static, str>, Comm
         ("\n".into(), AcceptLine),
 
         // Terminal special characters
-        (term.eof_char()       .to_string().into(), EndOfFile),
         (term.literal_char()   .to_string().into(), QuotedInsert),
         (term.erase_char()     .to_string().into(), BackwardDeleteChar),
         (term.word_erase_char().to_string().into(), UnixWordRubout),
@@ -3431,6 +3431,7 @@ fn default_bindings<Term: Terminal>(term: &Term) -> Vec<(Cow<'static, str>, Comm
         // Basic commands
         ("\x01"    .into(), BeginningOfLine),           // Ctrl-A
         ("\x02"    .into(), BackwardChar),              // Ctrl-B
+        ("\x04"    .into(), DeleteChar),                // Ctrl-D
         ("\x05"    .into(), EndOfLine),                 // Ctrl-E
         ("\x06"    .into(), ForwardChar),               // Ctrl-F
         ("\x07"    .into(), Abort),                     // Ctrl-G

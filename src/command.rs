@@ -112,8 +112,6 @@ define_commands!{
     ClearScreen => "clear-screen",
     /// Move the cursor to the beginning of the line
     BeginningOfLine => "beginning-of-line",
-    /// Indicates end-of-file
-    EndOfFile => "end-of-file",
     /// Move the cursor to the end of the line
     EndOfLine => "end-of-line",
     /// Delete one character before the cursor
