@@ -34,7 +34,7 @@ fn main() {
     }
 
     let mut thread_id = 0;
-    while let Ok(ReadResult::Input(line)) = reader.read_line() {
+    while let ReadResult::Input(line) = reader.read_line().unwrap() {
         if !line.trim().is_empty() {
             reader.add_history(line.clone());
         }
