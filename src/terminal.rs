@@ -3,6 +3,7 @@
 use std::io;
 use std::time::Duration;
 
+#[cfg(feature = "deafult-terminal")]
 use sys;
 
 /// Terminal cursor mode
@@ -87,6 +88,7 @@ pub struct Size {
 }
 
 /// Type alias for the platform-dependent default `Terminal` interface
+#[cfg(feature = "deafult-terminal")]
 pub type DefaultTerminal = sys::Terminal;
 
 /// Defines a low-level interface to the terminal

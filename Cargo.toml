@@ -14,6 +14,11 @@ keywords = ["console", "terminal", "input", "readline"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
 
+[features]
+default = ["deafult-terminal"]
+# Includes `DeafultTerminal` in the crate and makes it dependent on `libncursesw`
+deafult-terminal = []
+
 [badges]
 travis-ci = { repository = "murarth/linefeed" }
 
@@ -34,3 +39,19 @@ winapi = "0.2"
 [dev-dependencies]
 assert_matches = "1.0"
 rand = "0.3"
+
+[[example]]
+name = "demo"
+required-features = ["include-deafult-terminal"]
+
+[[example]]
+name = "function"
+required-features = ["include-deafult-terminal"]
+
+[[example]]
+name = "path_completion"
+required-features = ["include-deafult-terminal"]
+
+[[example]]
+name = "signals"
+required-features = ["include-deafult-terminal"]

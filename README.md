@@ -27,7 +27,14 @@ linefeed = "0.4"
 
 ### Dependencies
 
-On Unix systems, `linefeed` requires `libncursesw` (`libncurses` on Mac OS X).
+On Unix systems, `linefeed` requires `libncursesw` (`libncurses` on Mac OS X) to
+implement `DefaultTerminal`. But if you use your own implementation of `Terminal`,
+you can exclude `DefaultTerminal` from `linefeed` and avoid dependency:
+
+```toml
+[dependencies]
+linefeed = { version = "0.4", default-features = false }
+```
 
 ### Demo
 

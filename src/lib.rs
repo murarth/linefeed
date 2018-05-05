@@ -2,7 +2,7 @@
 //!
 //! # Basic example
 //!
-//! ```no_run
+//! ```ignore
 //! use linefeed::{Reader, ReadResult};
 //!
 //! let mut reader = Reader::new("my-application").unwrap();
@@ -33,7 +33,10 @@ pub use command::Command;
 pub use complete::{Completer, Completion, Suffix};
 pub use function::Function;
 pub use reader::{Reader, ReadResult};
-pub use terminal::{DefaultTerminal, Signal, Terminal};
+pub use terminal::{Signal, Terminal};
+
+#[cfg(feature = "deafult-terminal")]
+pub use terminal::DefaultTerminal;
 
 pub mod chars;
 pub mod command;
