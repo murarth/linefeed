@@ -2,7 +2,7 @@
 //!
 //! # Basic example
 //!
-//! ```no_run
+//! ```ignore
 //! use linefeed::{Reader, ReadResult};
 //!
 //! let mut reader = Reader::new("my-application").unwrap();
