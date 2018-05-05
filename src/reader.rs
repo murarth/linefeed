@@ -25,8 +25,11 @@ use function::Function;
 use inputrc::{parse_file, Directive};
 use sys::path::{env_init_file, system_init_file, user_init_file};
 use table::{format_columns, Table};
-use terminal::{CursorMode, DefaultTerminal, Signal, SignalSet, Size, Terminal};
+use terminal::{CursorMode, Signal, SignalSet, Size, Terminal};
 use util::{longest_common_prefix, RangeArgument};
+
+#[cfg(feature = "deafult-terminal")]
+use terminal::DefaultTerminal;
 
 /// Default `keyseq_timeout`, in milliseconds
 pub const KEYSEQ_TIMEOUT_MS: u64 = 500;
@@ -228,6 +231,7 @@ pub struct Reader<Term: Terminal> {
     poll_log_interval: Duration,
 }
 
+#[cfg(feature = "deafult-terminal")]
 impl Reader<DefaultTerminal> {
     /// Creates a new `Reader` with the given application name.
     ///
