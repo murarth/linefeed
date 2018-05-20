@@ -19,6 +19,7 @@ const HISTORY_FILE: &str = "linefeed.hst";
 
 fn main() -> io::Result<()> {
     let interface = Arc::new(Interface::new("demo")?);
+    let mut thread_id = 0;
 
     println!("This is the linefeed demo program.");
     println!("Enter \"help\" for a list of commands.");
@@ -27,15 +28,15 @@ fn main() -> io::Result<()> {
 
     interface.set_completer(Arc::new(DemoCompleter));
     interface.set_prompt("demo> ");
+
     if let Err(e) = interface.load_history(HISTORY_FILE) {
-        if e.kind() == std::io::ErrorKind::NotFound {
+        if e.kind() == io::ErrorKind::NotFound {
             println!("History file {} doesn't exist, not loading history.", HISTORY_FILE);
         } else {
             eprintln!("Could not load history file {}: {}", HISTORY_FILE, e);
         }
     }
 
-    let mut thread_id = 0;
     while let ReadResult::Input(line) = interface.read_line()? {
         if !line.trim().is_empty() {
             interface.add_history(line.clone());
