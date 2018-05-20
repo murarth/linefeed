@@ -5,7 +5,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write as IoWrite};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use command::Command;
 use complete::{Completer};
@@ -105,6 +105,10 @@ impl<Term: Terminal> Interface<Term> {
             self.term.lock_write(),
             self.write.lock().expect("Interface::lock_write"))
     }
+
+    pub(crate) fn lock_write_data(&self) -> MutexGuard<Write> {
+        self.write.lock().expect("Interface::lock_write_data")
+    }
 }
 
 /// ## Locking
@@ -158,9 +162,15 @@ impl<Term: Terminal> Interface<Term> {
         self.lock_reader().set_variable(name, value)
     }
 
-    /// Sets the current prompt.
+    /// Sets the prompt that will be displayed when `read_line` is called.
     ///
-    /// This method internally acquires the write lock.
+    /// This method internally acquires the `Interface` write lock.
+    ///
+    /// # Notes
+    ///
+    /// If `prompt` contains any terminal escape sequences (e.g. color codes),
+    /// such escape sequences should be immediately preceded by the character
+    /// `'\x01'` and immediately followed by the character `'\x02'`.
     pub fn set_prompt(&self, prompt: &str) {
         self.lock_reader().set_prompt(prompt)
     }

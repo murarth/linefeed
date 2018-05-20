@@ -5,6 +5,7 @@ use std::collections::{vec_deque, VecDeque};
 use std::fmt;
 use std::io;
 use std::iter::repeat;
+use std::marker::PhantomData;
 use std::mem::swap;
 use std::ops::{Deref, DerefMut, Range};
 use std::sync::MutexGuard;
@@ -42,6 +43,16 @@ const PROMPT_SEARCH_SUFFIX: usize = 3;
 /// [`Interface`]: ../interface/struct.Interface.html
 pub struct Writer<'a, Term: 'a + Terminal> {
     write: WriteLock<'a, Term>,
+}
+
+/// Enables modification of prompt input data before a call to `read_line`.
+///
+/// Prompt data is reset when a `read_line` call completes.
+pub struct PromptData<'a, 'b: 'a> {
+    data: MutexGuard<'b, Write>,
+    // Borrows a lifetime from Reader to prevent prompt data from being modified
+    // while a read_line call is in progress.
+    _marker: PhantomData<&'a ()>,
 }
 
 pub(crate) struct Write {
@@ -909,6 +920,79 @@ impl<'a, Term: Terminal> Drop for Writer<'a, Term> {
         if self.write.is_prompt_drawn {
             // There's not really anything useful to be done with this error.
             let _ = self.write.draw_prompt();
+        }
+    }
+}
+
+impl<'a, 'b: 'a> PromptData<'a, 'b> {
+    pub(crate) fn new(data: MutexGuard<'b, Write>) -> Self {
+        PromptData{data, _marker: PhantomData}
+    }
+
+    /// Returns the current contents of the input buffer.
+    pub fn buffer(&self) -> &str {
+        &self.data.buffer
+    }
+
+    /// Returns a mutable reference to the current input buffer.
+    ///
+    /// # Notes
+    ///
+    /// To prevent invalidating the cursor, this method sets the cursor
+    /// position to `0`.
+    pub fn buffer_mut(&mut self) -> &mut String {
+        self.data.cursor = 0;
+        &mut self.data.buffer
+    }
+
+    /// Sets the input buffer to the given string.
+    ///
+    /// # Notes
+    ///
+    /// To prevent invalidating the cursor, this method sets the cursor
+    /// position to `0`.
+    pub fn set_buffer(&mut self, s: &str) {
+        self.data.cursor = 0;
+        self.data.buffer.clear();
+        self.data.buffer.push_str(s);
+    }
+
+    /// Returns the current cursor position.
+    pub fn cursor(&self) -> usize {
+        self.data.cursor
+    }
+
+    /// Sets the cursor position in the input buffer.
+    ///
+    /// # Panics
+    ///
+    /// If the given position is out of bounds or not on a `char` boundary.
+    pub fn set_cursor(&mut self, pos: usize) {
+        if !self.data.buffer.is_char_boundary(pos) {
+            panic!("invalid cursor position {} in buffer {:?}",
+                pos, self.data.buffer);
+        }
+
+        self.data.cursor = pos;
+    }
+
+    /// Sets the prompt that will be displayed when `read_line` is called.
+    ///
+    /// # Notes
+    ///
+    /// If `prompt` contains any terminal escape sequences (e.g. color codes),
+    /// such escape sequences should be immediately preceded by the character
+    /// `'\x01'` and immediately followed by the character `'\x02'`.
+    pub fn set_prompt(&mut self, prompt: &str) {
+        match prompt.rfind('\n') {
+            Some(pos) => {
+                self.data.prompt_prefix = prompt[..pos + 1].to_owned();
+                self.data.prompt_suffix = prompt[pos + 1..].to_owned();
+            }
+            None => {
+                self.data.prompt_prefix.clear();
+                self.data.prompt_suffix = prompt.to_owned();
+            }
         }
     }
 }

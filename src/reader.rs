@@ -25,6 +25,7 @@ use terminal::{
 };
 use util::{first_char, match_name};
 use variables::{Variable, Variables, VariableIter};
+use writer::PromptData;
 
 /// Default set of string characters
 pub const STRING_CHARS: &str = "\"'";
@@ -166,6 +167,30 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
         res
     }
 
+    /// Acquires the `Interface` write lock and returns a `PromptData` instance.
+    ///
+    /// The `PromptData` structure enables modification of prompt input data
+    /// before a call to `read_line`. Prompt data is reset when a `read_line`
+    /// call completes.
+    pub fn lock_prompt_data<'b>(&'b mut self) -> PromptData<'b, 'a> {
+        // Borrows from &mut Reader lifetime to prevent prompt data from being
+        // modified while a read_line call is in progress.
+        PromptData::new(self.iface.lock_write_data())
+    }
+
+    /// Sets the prompt that will be displayed when `read_line` is called.
+    ///
+    /// This method internally acquires the `Interface` write lock.
+    ///
+    /// # Notes
+    ///
+    /// If `prompt` contains any terminal escape sequences (e.g. color codes),
+    /// such escape sequences should be immediately preceded by the character
+    /// `'\x01'` and immediately followed by the character `'\x02'`.
+    pub fn set_prompt(&mut self, prompt: &str) {
+        self.lock_prompt_data().set_prompt(prompt)
+    }
+
     /// Returns the application name
     pub fn application(&self) -> &str {
         &self.lock.application
@@ -206,17 +231,6 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     /// Returns an iterator over stored variables.
     pub fn variables(&self) -> VariableIter {
         self.lock.variables.iter()
-    }
-
-    /// Sets the prompt that will be displayed when `read_line` is called.
-    ///
-    /// # Notes
-    ///
-    /// If `prompt` contains any terminal escape sequences (e.g. color codes),
-    /// such escape sequences should be immediately preceded by the character
-    /// `'\x01'` and immediately followed by the character `'\x02'`.
-    pub fn set_prompt(&mut self, prompt: &str) {
-        self.prompter().set_prompt(prompt)
     }
 
     /// Returns whether to "blink" matching opening parenthesis character
@@ -463,14 +477,14 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
             prompter.start_read_line()?;
         }
 
-        loop {
+        let res = loop {
             if let Some(size) = self.lock.take_resize() {
                 self.handle_resize(size)?;
             }
 
             if let Some(sig) = self.lock.take_signal() {
                 if self.lock.report_signals.contains(sig) {
-                    return Ok(ReadResult::Signal(sig));
+                    break ReadResult::Signal(sig);
                 }
                 if !self.lock.ignore_signals.contains(sig) {
                     self.handle_signal(sig)?;
@@ -485,10 +499,14 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
                 let mut prompter = self.prompter();
 
                 if let Some(r) = prompter.handle_input(ch)? {
-                    return Ok(r);
+                    break r;
                 }
             }
-        }
+        };
+
+        self.prompter().end_read_line();
+
+        Ok(res)
     }
 
     fn prompter<'b>(&'b mut self) -> Prompter<'b, 'a, Term> {

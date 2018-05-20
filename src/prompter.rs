@@ -53,10 +53,13 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     }
 
     pub(crate) fn start_read_line(&mut self) -> io::Result<()> {
-        self.reset_input();
         self.write.is_prompt_drawn = true;
         self.write.update_size()?;
         self.write.draw_prompt()
+    }
+
+    pub(crate) fn end_read_line(&mut self) {
+        self.reset_input();
     }
 
     pub(crate) fn handle_input(&mut self, ch: char) -> io::Result<Option<ReadResult>> {
@@ -180,21 +183,6 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     /// Returns the current input sequence.
     pub fn sequence(&self) -> &str {
         &self.read.sequence
-    }
-
-    // This method is limited to `pub(crate)` to prevent changing the prompt
-    // while a `read_line` call is in progress.
-    pub(crate) fn set_prompt(&mut self, prompt: &str) {
-        match prompt.rfind('\n') {
-            Some(pos) => {
-                self.write.prompt_prefix = prompt[..pos + 1].to_owned();
-                self.write.prompt_suffix = prompt[pos + 1..].to_owned();
-            }
-            None => {
-                self.write.prompt_prefix.clear();
-                self.write.prompt_suffix = prompt.to_owned();
-            }
-        }
     }
 
     /// Returns an iterator over bound sequences
