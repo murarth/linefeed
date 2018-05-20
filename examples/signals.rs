@@ -81,6 +81,7 @@ fn main() -> io::Result<()> {
                 }
             }
             ReadResult::Signal(sig) => {
+                println!();
                 println!("signal received: {:?}", sig);
             }
         }
