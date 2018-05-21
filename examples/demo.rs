@@ -39,7 +39,7 @@ fn main() -> io::Result<()> {
 
     while let ReadResult::Input(line) = interface.read_line()? {
         if !line.trim().is_empty() {
-            interface.add_history(line.clone());
+            interface.add_history_unique(line.clone());
         }
 
         let (cmd, args) = split_first_word(&line);

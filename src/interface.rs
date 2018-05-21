@@ -262,6 +262,11 @@ impl<Term: Terminal> Interface<Term> {
         self.lock_write().add_history(line)
     }
 
+    /// Adds a line to history, unless it is identical to the most recent entry.
+    pub fn add_history_unique(&self, line: String) {
+        self.lock_write().add_history_unique(line)
+    }
+
     /// Removes all history entries.
     pub fn clear_history(&self) {
         self.lock_write().clear_history()

@@ -533,6 +533,14 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         self.history_index = None;
     }
 
+    pub fn add_history_unique(&mut self, line: String) {
+        let is_duplicate = self.history.back().map_or(false, |ent| *ent == line);
+
+        if !is_duplicate {
+            self.add_history(line);
+        }
+    }
+
     pub fn clear_history(&mut self) {
         self.truncate_history(0);
     }
