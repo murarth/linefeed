@@ -1080,12 +1080,13 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 self.write.draw_prompt()?;
             }
             Signal::Interrupt => {
+                self.read.macro_buffer.clear();
+                self.write.move_to_end()?;
+
                 if self.read.echo_control_characters {
                     self.write.write_str("^C")?;
                 }
 
-                self.read.macro_buffer.clear();
-                self.write.move_to_end()?;
                 self.write.write_str("\n")?;
                 self.reset_input();
                 self.write.draw_prompt()?;
