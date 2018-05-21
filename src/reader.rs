@@ -47,7 +47,11 @@ const MAX_KILLS: usize = 10;
 /// Holds a lock on terminal read operations.
 /// See [`Interface`] for more information about concurrent operations.
 ///
+/// An instance of this type can be constructed using the
+/// [`Interface::lock_reader`] method.
+///
 /// [`Interface`]: ../interface/struct.Interface.html
+/// [`Interface::lock_reader`]: ../interface/struct.Interface.html#method.lock_reader
 pub struct Reader<'a, Term: 'a + Terminal> {
     iface: &'a Interface<Term>,
     lock: ReadLock<'a, Term>,

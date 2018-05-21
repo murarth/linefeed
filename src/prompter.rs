@@ -34,7 +34,11 @@ const BLINK_TIMEOUT_MS: u64 = 500;
 /// Holds read and write locks on terminal operations.
 /// See [`Interface`] for more information about concurrent operations.
 ///
+/// Instances of this type cannot be constructed by public methods.
+/// Instead, an instance is created internally during a call to [`read_line`].
+///
 /// [`Interface`]: ../interface/struct.Interface.html
+/// [`read_line`]: ../interface/struct.Interface.html#method.read_line
 pub struct Prompter<'a, 'b: 'a, Term: 'b + Terminal> {
     read: &'a mut ReadLock<'b, Term>,
     write: WriteLock<'b, Term>,

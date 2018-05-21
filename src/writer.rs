@@ -40,7 +40,11 @@ const PROMPT_SEARCH_SUFFIX: usize = 3;
 /// Holds a lock on terminal write operations.
 /// See [`Interface`] for more information about concurrent operations.
 ///
+/// An instance of this type can be constructed using the
+/// [`Interface::lock_writer`] method.
+///
 /// [`Interface`]: ../interface/struct.Interface.html
+/// [`Interface::lock_writer`]: ../interface/struct.Interface.html#method.lock_writer
 pub struct Writer<'a, Term: 'a + Terminal> {
     write: WriteLock<'a, Term>,
 }
@@ -48,6 +52,11 @@ pub struct Writer<'a, Term: 'a + Terminal> {
 /// Enables modification of prompt input data before a call to `read_line`.
 ///
 /// Prompt data is reset when a `read_line` call completes.
+///
+/// An instance of this type can be constructed using the
+/// [`Reader::lock_prompt_data`] method.
+///
+/// [`Reader::lock_prompt_data`]: ../reader/struct.Reader.html#method.lock_prompt_data
 pub struct PromptData<'a, 'b: 'a> {
     data: MutexGuard<'b, Write>,
     // Borrows a lifetime from Reader to prevent prompt data from being modified
