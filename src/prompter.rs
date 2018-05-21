@@ -216,22 +216,6 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
         self.write.history.len()
     }
 
-    /// Removes the `n`th history entry
-    ///
-    /// # Panics
-    ///
-    /// If `n` is out of bounds.
-    pub fn remove_history(&mut self, n: usize) {
-        self.write.remove_history(n)
-    }
-
-    /// Truncates history to the most recent `n` entries.
-    ///
-    /// If there are fewer than `n` entries in history, this has no effect.
-    pub fn truncate_history(&mut self, n: usize) {
-        self.write.truncate_history(n)
-    }
-
     fn next_history(&mut self, n: usize) -> io::Result<()> {
         self.write.next_history(n)
     }

@@ -257,24 +257,19 @@ impl<Term: Terminal> Interface<Term> {
 ///
 /// If the write lock is already held, the method will block until it is released.
 impl<Term: Terminal> Interface<Term> {
-    /// Adds a line to history.
-    pub fn add_history(&self, line: String) {
-        self.lock_write().add_history(line)
+    /// Returns the current number of history entries.
+    pub fn history_len(&self) -> usize {
+        self.lock_write().history_len()
     }
 
-    /// Adds a line to history, unless it is identical to the most recent entry.
-    pub fn add_history_unique(&self, line: String) {
-        self.lock_write().add_history_unique(line)
-    }
-
-    /// Removes all history entries.
-    pub fn clear_history(&self) {
-        self.lock_write().clear_history()
-    }
-
-    /// Truncates history to the only the most recent `n` entries.
-    pub fn truncate_history(&self, n: usize) {
-        self.lock_write().truncate_history(n)
+    /// Returns the maximum number of history entries.
+    ///
+    /// Not to be confused with [`history_len`], which returns the *current*
+    /// number of history entries.
+    ///
+    /// [`history_len`]: #method.history_len
+    pub fn history_size(&self) -> usize {
+        self.lock_write().history_size()
     }
 
     /// Save history entries to the specified file.
@@ -328,5 +323,60 @@ impl<Term: Terminal> Interface<Term> {
 
     fn write_str(&self, line: &str) -> io::Result<()> {
         self.lock_writer()?.write_str(line)
+    }
+}
+
+/// ## Locking
+///
+/// The following methods internally acquire both the read and write locks.
+///
+/// The locks are released before the method returns.
+///
+/// If either lock is already held, the method will block until it is released.
+impl<Term: Terminal> Interface<Term> {
+    // Some of these methods don't appear to require a read lock, but do acquire
+    // it nonetheless because any operation that truncates history may interefere
+    // with an ongoing `read_line` call. Therefore, the read lock is acquired
+    // to ensure that no `read_line` call is in progress.
+
+    /// Adds a line to history.
+    pub fn add_history(&self, line: String) {
+        let _reader = self.lock_read();
+        self.lock_write().add_history(line);
+    }
+
+    /// Adds a line to history, unless it is identical to the most recent entry.
+    pub fn add_history_unique(&self, line: String) {
+        let _reader = self.lock_read();
+        self.lock_write().add_history_unique(line);
+    }
+
+    /// Removes all history entries.
+    pub fn clear_history(&self) {
+        let _reader = self.lock_read();
+        self.lock_write().clear_history();
+    }
+
+    /// Removes the history entry at the given index.
+    ///
+    /// If the index is out of bounds, this method has no effect.
+    pub fn remove_history(&self, idx: usize) {
+        let _reader = self.lock_read();
+        self.lock_write().remove_history(idx);
+    }
+
+    /// Sets the maximum number of history entries.
+    ///
+    /// If `n` is less than the current number of history entries,
+    /// the oldest entries are truncated to meet the given requirement.
+    pub fn set_history_size(&self, n: usize) {
+        let _reader = self.lock_read();
+        self.lock_write().set_history_size(n);
+    }
+
+    /// Truncates history to the only the most recent `n` entries.
+    pub fn truncate_history(&self, n: usize) {
+        let _reader = self.lock_read();
+        self.lock_write().truncate_history(n);
     }
 }

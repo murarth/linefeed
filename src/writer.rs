@@ -18,6 +18,9 @@ use util::{
     filter_visible, is_combining_mark, is_wide, RangeArgument,
 };
 
+/// Default maximum history size
+const MAX_HISTORY: usize = !0;
+
 /// Tab column interval
 const TAB_STOP: usize = 8;
 
@@ -74,6 +77,7 @@ pub(crate) struct Write {
 
     pub history: VecDeque<String>,
     pub history_index: Option<usize>,
+    history_size: usize,
 
     /// Whether the prompt is drawn; i.e. a `read_line` operation is in progress
     pub is_prompt_drawn: bool,
@@ -298,6 +302,19 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
     pub fn set_cursor_mode(&mut self, mode: CursorMode) -> io::Result<()> {
         self.term.set_cursor_mode(mode)
+    }
+
+    pub fn history_len(&self) -> usize {
+        self.history.len()
+    }
+
+    pub fn history_size(&self) -> usize {
+        self.history_size
+    }
+
+    pub fn set_history_size(&mut self, n: usize) {
+        self.history_size = n;
+        self.truncate_history(n);
     }
 
     pub fn write_str(&mut self, s: &str) -> io::Result<()> {
@@ -529,8 +546,11 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     }
 
     pub fn add_history(&mut self, line: String) {
+        if self.history.len() == self.history_size {
+            self.history.pop_front();
+        }
+
         self.history.push_back(line);
-        self.history_index = None;
     }
 
     pub fn add_history_unique(&mut self, line: String) {
@@ -546,8 +566,9 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     }
 
     pub fn remove_history(&mut self, n: usize) {
-        self.history.remove(n);
-        self.history_index = None;
+        if n < self.history.len() {
+            self.history.remove(n);
+        }
     }
 
     pub fn truncate_history(&mut self, n: usize) {
@@ -556,8 +577,6 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         if n < len {
             let _ = self.history.drain(..len - n);
         }
-
-        self.history_index = None;
     }
 
     pub fn next_history(&mut self, n: usize) -> io::Result<()> {
@@ -1037,6 +1056,7 @@ impl Write {
 
             history: VecDeque::new(),
             history_index: None,
+            history_size: MAX_HISTORY,
 
             is_prompt_drawn: false,
 
