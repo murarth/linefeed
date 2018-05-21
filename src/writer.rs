@@ -98,10 +98,10 @@ pub(crate) struct Write {
     pub search_buffer: String,
     /// Last search string
     pub last_search: String,
-    /// Current matching history entry
-    pub search_index: Option<usize>,
-    /// Position within entry of first match
-    pub search_pos: Option<usize>,
+    /// Selected history entry prior to a history search
+    pub prev_history: Option<usize>,
+    /// Position of the cursor prior to a history search
+    pub prev_cursor: usize,
 
     /// Numerical argument
     pub input_arg: Digit,
@@ -168,11 +168,11 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
                     (true,  true)  => "(failed reverse-i-search)",
                 };
 
-                let ent = self.get_history(self.search_index).to_owned();
+                let ent = self.get_history(self.history_index).to_owned();
                 let s = format!("{}`{}': {}", pre, self.search_buffer, ent);
 
                 self.draw_text(0, &s)?;
-                let pos = self.search_pos.unwrap_or(self.cursor);
+                let pos = self.cursor;
 
                 return self.move_within(ent.len(), pos, &ent);
             }
@@ -184,11 +184,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     }
 
     pub fn redraw_prompt(&mut self, new_prompt: PromptType) -> io::Result<()> {
-        let (line, _) = self.line_col(self.cursor);
-
-        self.term.move_up(line)?;
-        self.term.move_to_first_column()?;
-        self.term.clear_to_screen_end()?;
+        self.clear_prompt()?;
 
         self.prompt_type = new_prompt;
 
@@ -323,39 +319,28 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
     pub fn start_history_search(&mut self, reverse: bool) -> io::Result<()> {
         self.search_buffer = self.buffer[..self.cursor].to_owned();
-        self.search_index = self.history_index;
 
         self.continue_history_search(reverse)
     }
 
     pub fn continue_history_search(&mut self, reverse: bool) -> io::Result<()> {
         if let Some(idx) = self.find_history_search(reverse) {
-            self.fill_history_entry(idx)?;
-            self.search_index = Some(idx);
-        } else if !reverse && self.search_buffer.is_empty() {
-            self.set_buffer("")?;
-            self.search_index = None;
+            self.set_history_entry(Some(idx));
+
+            let pos = self.cursor;
+            let end = self.buffer.len();
+
+            self.draw_buffer(pos)?;
+            self.clear_to_screen_end()?;
+            self.move_from(end)?;
         }
 
         Ok(())
     }
 
-    fn fill_history_entry(&mut self, idx: usize) -> io::Result<()> {
-        let pos = self.cursor;
-        self.move_to(0)?;
-
-        {
-            let data = &mut *self.data;
-            data.buffer.clone_from(&data.history[idx]);
-        }
-
-        self.new_buffer()?;
-        self.move_to(pos)
-    }
-
     fn find_history_search(&self, reverse: bool) -> Option<usize> {
         let len = self.history.len();
-        let idx = self.search_index.unwrap_or(len);
+        let idx = self.history_index.unwrap_or(len);
 
         if reverse {
             self.history.iter().rev().skip(len - idx)
@@ -372,8 +357,8 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         self.reverse_search = reverse;
         self.search_failed = false;
         self.search_buffer.clear();
-        self.search_index = self.history_index;
-        self.search_pos = Some(self.cursor);
+        self.prev_history = self.history_index;
+        self.prev_cursor = self.cursor;
 
         self.redraw_prompt(PromptType::Search)
     }
@@ -387,23 +372,38 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
             data.search_buffer.clone_from(&data.last_search);
         }
 
-        self.search_index = self.history_index;
-        self.search_pos = Some(self.cursor);
-
         self.search_history_step()
     }
 
-    fn show_search_match(&mut self, next_match: Option<(Option<usize>, Option<usize>)>)
+    pub fn end_search_history(&mut self) -> io::Result<()> {
+        self.redraw_prompt(PromptType::Normal)
+    }
+
+    pub fn abort_search_history(&mut self) -> io::Result<()> {
+        self.clear_prompt()?;
+
+        let ent = self.prev_history;
+        self.set_history_entry(ent);
+        self.cursor = self.prev_cursor;
+
+        self.prompt_type = PromptType::Normal;
+        self.draw_prompt()
+    }
+
+    fn show_search_match(&mut self, next_match: Option<(Option<usize>, usize)>)
             -> io::Result<()> {
+        self.clear_prompt()?;
+
         if let Some((idx, pos)) = next_match {
             self.search_failed = false;
-            self.search_index = idx;
-            self.search_pos = pos;
+            self.set_history_entry(idx);
+            self.cursor = pos;
         } else {
             self.search_failed = true;
         }
 
-        self.redraw_prompt(PromptType::Search)
+        self.prompt_type = PromptType::Search;
+        self.draw_prompt()
     }
 
     pub fn search_history_update(&mut self) -> io::Result<()> {
@@ -433,9 +433,9 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     }
 
     fn search_history_backward(&self, s: &str, include_cur: bool)
-            -> Option<(Option<usize>, Option<usize>)> {
-        let mut idx = self.search_index;
-        let mut pos = self.search_pos;
+            -> Option<(Option<usize>, usize)> {
+        let mut idx = self.history_index;
+        let mut pos = Some(self.cursor);
 
         if include_cur && !self.search_failed {
             if let Some(p) = pos {
@@ -473,13 +473,13 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
             }
         }
 
-        Some((idx, pos))
+        pos.map(|pos| (idx, pos))
     }
 
     fn search_history_forward(&self, s: &str, include_cur: bool)
-            -> Option<(Option<usize>, Option<usize>)> {
-        let mut idx = self.search_index;
-        let mut pos = self.search_pos;
+            -> Option<(Option<usize>, usize)> {
+        let mut idx = self.history_index;
+        let mut pos = Some(self.cursor);
 
         if !include_cur {
             if let Some(p) = pos {
@@ -510,7 +510,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
             }
         }
 
-        Some((idx, pos))
+        pos.map(|pos| (idx, pos))
     }
 
     pub fn display_size(&self, s: &str, start_col: usize) -> usize {
@@ -840,6 +840,14 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         self.term.clear_to_screen_end()
     }
 
+    fn clear_prompt(&mut self) -> io::Result<()> {
+        let (line, _) = self.line_col(self.cursor);
+
+        self.term.move_up(line)?;
+        self.term.move_to_first_column()?;
+        self.term.clear_to_screen_end()
+    }
+
     /// Move back to true cursor position from some other position
     pub fn move_from(&mut self, pos: usize) -> io::Result<()> {
         let cursor = self.cursor;
@@ -1069,8 +1077,8 @@ impl Write {
             search_failed: false,
             search_buffer: String::new(),
             last_search: String::new(),
-            search_index: None,
-            search_pos: None,
+            prev_history: None,
+            prev_cursor: !0,
 
             input_arg: Digit::None,
             explicit_arg: false,

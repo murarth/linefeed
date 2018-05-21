@@ -419,3 +419,64 @@ fn test_transpose_words() {
     assert_lines(&term, &["$ a ccc bbx", "$ a cccx bb", "$ bb ax ccc",
         "$ bb ccc ax", "$ bb ccc dddd ax eeeee", "$ a eeeeex bb ccc dddd"]);
 }
+
+#[test]
+fn test_search_history() {
+    let (term, r) = test("");
+
+    term.resize(Size{lines: 10, columns: 10});
+
+    r.add_history("foo".into());
+
+    term.push_input("\x12f\n");
+    assert_read(&r, "foo");
+
+    r.add_history("bar veryverylonginput".into());
+
+    term.push_input("\x12b\n");
+    assert_read(&r, "bar veryverylonginput");
+
+    assert_lines(&term, &[
+        "$ foo",
+        "$ bar very",
+        "verylongin",
+        "put",
+    ]);
+}
+
+#[test]
+fn test_history_search() {
+    let (term, r) = test("");
+
+    term.resize(Size{lines: 10, columns: 10});
+
+    r.bind_sequence("\x01", Command::HistorySearchBackward);
+    r.bind_sequence("\x02", Command::HistorySearchForward);
+
+    r.add_history("foo".into());
+    r.add_history("fab".into());
+    r.add_history("fun".into());
+
+    term.push_input("f\x01\n");
+    assert_read(&r, "fun");
+
+    term.push_input("f\x01\x01\n");
+    assert_read(&r, "fab");
+
+    term.push_input("f\x01\x01\x01\n");
+    assert_read(&r, "foo");
+
+    term.push_input("f\x01\x01\x02\n");
+    assert_read(&r, "fun");
+
+    term.push_input("f\x01\x02\x02\n");
+    assert_read(&r, "fun");
+
+    assert_lines(&term, &[
+        "$ fun",
+        "$ fab",
+        "$ foo",
+        "$ fun",
+        "$ fun",
+    ]);
+}

@@ -113,7 +113,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                     self.abort_search_history()?;
                 } else if is_ctrl(ch) {
                     // End search, handle input after cancelling
-                    self.end_search_history()?;
+                    self.write.end_search_history()?;
                     self.read.macro_buffer.insert(0, ch);
                 } else {
                     {
@@ -229,11 +229,6 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     /// Setting the entry to `None` will result in editing the input buffer.
     pub fn select_history_entry(&mut self, new: Option<usize>) -> io::Result<()> {
         self.write.select_history_entry(new)
-    }
-
-    /// Sets history entry. Performs no screen modification.
-    fn set_history_entry(&mut self, new: Option<usize>) {
-        self.write.set_history_entry(new)
     }
 
     /// Returns the current set of completions.
@@ -1055,16 +1050,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
 
     fn abort_search_history(&mut self) -> io::Result<()> {
         self.read.last_cmd = Category::Other;
-        self.write.redraw_prompt(PromptType::Normal)
-    }
-
-    fn end_search_history(&mut self) -> io::Result<()> {
-        let new = self.write.search_index;
-        self.set_history_entry(new);
-        if let Some(pos) = self.write.search_pos {
-            self.write.cursor = pos;
-        }
-        self.write.redraw_prompt(PromptType::Normal)
+        self.write.abort_search_history()
     }
 
     pub(crate) fn handle_resize(&mut self, size: Size) -> io::Result<()> {
