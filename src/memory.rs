@@ -358,11 +358,13 @@ impl Writer {
     }
 
     fn write_char(&mut self, ch: char) {
-        if self.col < self.size.columns && self.line < self.size.lines {
-            let idx = self.index();
-            self.memory[idx] = ch;
-            self.col += 1;
+        if self.col >= self.size.columns {
+            self.advance_line();
         }
+
+        let idx = self.index();
+        self.memory[idx] = ch;
+        self.col += 1;
     }
 
     fn index(&self) -> usize {
