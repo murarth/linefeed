@@ -55,35 +55,35 @@ fn assert_lines(term: &MemoryTerminal, tests: &[&str]) {
     }
 }
 
-fn assert_read<T: Terminal>(r: &mut Interface<T>, line: &str) {
+fn assert_read<T: Terminal>(r: &Interface<T>, line: &str) {
     assert_matches!(r.read_line(), Ok(ReadResult::Input(ref s)) if s == line);
 }
 
 #[test]
 fn test_eof() {
-    let (term, mut r) = test("\x04");
+    let (term, r) = test("\x04");
 
     assert_matches!(r.read_line(), Ok(ReadResult::Eof));
 
     term.push_input("foo\x04\n");
-    assert_read(&mut r, "foo");
+    assert_read(&r, "foo");
 
     assert_lines(&term, &["$", "$ foo"]);
 }
 
 #[test]
 fn test_quote() {
-    let (term, mut r) = test("\x16\x03\n");
+    let (term, r) = test("\x16\x03\n");
 
-    assert_read(&mut r, "\x03");
+    assert_read(&r, "\x03");
     assert_lines(&term, &["$ ^C"]);
 }
 
 #[test]
 fn test_insert() {
-    let (term, mut r) = test("abc\n");
+    let (term, r) = test("abc\n");
 
-    assert_read(&mut r, "abc");
+    assert_read(&r, "abc");
     assert_lines(&term, &["$ abc"]);
 }
 
@@ -99,23 +99,23 @@ impl<Term: Terminal> Completer<Term> for TestCompleter {
 
 #[test]
 fn test_complete() {
-    let (term, mut r) = test("hi foo\t\t\n");
+    let (term, r) = test("hi foo\t\t\n");
 
     r.set_completer(Arc::new(TestCompleter(vec!["foobar", "foobaz"])));
 
-    assert_read(&mut r, "hi fooba");
+    assert_read(&r, "hi fooba");
     assert_lines(&term, &["$ hi fooba", "foobar  foobaz", "$ hi fooba"]);
 
     term.clear_all();
     term.push_input("hi foo\x1b?\n");
 
-    assert_read(&mut r, "hi foo");
+    assert_read(&r, "hi foo");
     assert_lines(&term, &["$ hi foo", "foobar  foobaz", "$ hi foo"]);
 
     term.clear_all();
     term.push_input("hi foo\x1b*\n");
 
-    assert_read(&mut r, "hi foobar foobaz ");
+    assert_read(&r, "hi foobar foobaz ");
     assert_lines(&term, &["$ hi foobar foobaz"]);
 }
 
@@ -139,7 +139,7 @@ fn fn_bar<Term: Terminal>(reader: &mut Prompter<Term>, count: i32, ch: char)
 
 #[test]
 fn test_function() {
-    let (term, mut r) = test("");
+    let (term, r) = test("");
 
     r.define_function("fn-foo", Arc::new(fn_foo));
     r.bind_sequence("\x18", Command::from_str("fn-foo"));
@@ -148,48 +148,48 @@ fn test_function() {
     r.bind_sequence("\x19", Command::from_str("fn-bar"));
 
     term.push_input("\x18\n");
-    assert_read(&mut r, "foo");
+    assert_read(&r, "foo");
 
     term.push_input("\x1b2\x19\n");
-    assert_read(&mut r, "bar");
+    assert_read(&r, "bar");
 
     assert_lines(&term, &["$ foo", "$ bar"]);
 }
 
 #[test]
 fn test_macro() {
-    let (term, mut r) = test("");
+    let (term, r) = test("");
 
     r.bind_sequence("A", Command::Macro("foo"     .into()));
     r.bind_sequence("B", Command::Macro("barCquux".into()));
     r.bind_sequence("C", Command::Macro("baz"     .into()));
 
     term.push_input("A\n");
-    assert_read(&mut r, "foo");
+    assert_read(&r, "foo");
 
     term.push_input("B\n");
-    assert_read(&mut r, "barbazquux");
+    assert_read(&r, "barbazquux");
 
     assert_lines(&term, &["$ foo", "$ barbazquux"]);
 }
 
 #[test]
 fn test_comment() {
-    let (term, mut r) = test("lol\x1b#");
+    let (term, r) = test("lol\x1b#");
 
-    assert_read(&mut r, "#lol");
+    assert_read(&r, "#lol");
     assert_lines(&term, &["$ #lol"]);
 
     term.clear_all();
     term.push_input("#wut\x1b-\x1b#");
 
-    assert_read(&mut r, "wut");
+    assert_read(&r, "wut");
     assert_lines(&term, &["$ wut"]);
 }
 
 #[test]
 fn test_arrows() {
-    let (term, mut r) = test("abcde");
+    let (term, r) = test("abcde");
 
     term.push_input(LEFT_ARROW);
     term.push_input("x");
@@ -197,68 +197,68 @@ fn test_arrows() {
     term.push_input("y");
     term.push_input(RIGHT_ARROW);
     term.push_input("z\n");
-    assert_read(&mut r, "yazbcdxe");
+    assert_read(&r, "yazbcdxe");
 
     term.push_input("abcde");
     term.push_input("\x1b3");
     term.push_input(LEFT_ARROW);
     term.push_input("x\n");
-    assert_read(&mut r, "abxcde");
+    assert_read(&r, "abxcde");
 
     assert_lines(&term, &["$ yazbcdxe", "$ abxcde"]);
 }
 
 #[test]
 fn test_digit() {
-    let (term, mut r) = test("");
+    let (term, r) = test("");
 
     term.push_input("\x1b10.\n");
-    assert_read(&mut r, "..........");
+    assert_read(&r, "..........");
 
     assert_lines(&term, &["$ .........."]);
 }
 
 #[test]
 fn test_search_char() {
-    let (term, mut r) = test("lolwut");
+    let (term, r) = test("lolwut");
 
     term.push_input("\x1b\x1dw.");
     term.push_input("\x1b2\x1b\x1dl,");
     term.push_input("\x1do:\n");
-    assert_read(&mut r, ",l:ol.wut");
+    assert_read(&r, ",l:ol.wut");
 
     term.push_input("alpha");
     term.push_input(HOME);
     term.push_input("\x1dax\n");
-    assert_read(&mut r, "alphxa");
+    assert_read(&r, "alphxa");
 
     assert_lines(&term, &["$ ,l:ol.wut", "$ alphxa"]);
 }
 
 #[test]
 fn test_delete() {
-    let (term, mut r) = test("sup");
+    let (term, r) = test("sup");
 
     term.push_input(LEFT_ARROW);
     term.push_input(LEFT_ARROW);
     term.push_input(DELETE);
     term.push_input("\n");
 
-    assert_read(&mut r, "sp");
+    assert_read(&r, "sp");
 
     term.push_input("sup");
     term.push_input(LEFT_ARROW);
     term.push_input(LEFT_ARROW);
     term.push_input("\x7f\n");
 
-    assert_read(&mut r, "up");
+    assert_read(&r, "up");
 
     assert_lines(&term, &["$ sp", "$ up"]);
 }
 
 #[test]
 fn test_history() {
-    let (term, mut r) = test("");
+    let (term, r) = test("");
 
     r.add_history("alpha".to_owned());
     r.add_history("bravo".to_owned());
@@ -268,27 +268,27 @@ fn test_history() {
     term.push_input(UP_ARROW);
     term.push_input("\n");
 
-    assert_read(&mut r, "delta");
+    assert_read(&r, "delta");
 
     term.push_input(UP_ARROW);
     term.push_input(UP_ARROW);
     term.push_input("\n");
 
-    assert_read(&mut r, "charlie");
+    assert_read(&r, "charlie");
 
     term.push_input("foo");
     term.push_input(UP_ARROW);
     term.push_input(DOWN_ARROW);
     term.push_input("\n");
 
-    assert_read(&mut r, "foo");
+    assert_read(&r, "foo");
 
     assert_lines(&term, &["$ delta", "$ charlie", "$ foo"]);
 }
 
 #[test]
 fn test_history_mod() {
-    let (term, mut r) = test("");
+    let (term, r) = test("");
 
     r.add_history("alpha".to_owned());
     r.add_history("bravo".to_owned());
@@ -300,30 +300,30 @@ fn test_history_mod() {
     term.push_input(UP_ARROW);
     term.push_input("x\n");
 
-    assert_read(&mut r, "charliex");
+    assert_read(&r, "charliex");
 
     term.push_input(UP_ARROW);
     term.push_input("\n");
 
-    assert_read(&mut r, "deltax");
+    assert_read(&r, "deltax");
 
     term.push_input(UP_ARROW);
     term.push_input(UP_ARROW);
     term.push_input("\n");
 
-    assert_read(&mut r, "charlie");
+    assert_read(&r, "charlie");
 
     assert_lines(&term, &["$ charliex", "$ deltax", "$ charlie"]);
 }
 
 #[test]
 fn test_kill() {
-    let (term, mut r) = test("foo bar baz\x1b\x7f\x1b\x7f\n");
+    let (term, r) = test("foo bar baz\x1b\x7f\x1b\x7f\n");
 
-    assert_read(&mut r, "foo ");
+    assert_read(&r, "foo ");
 
     term.push_input("\x19\n");
-    assert_read(&mut r, "bar baz");
+    assert_read(&r, "bar baz");
 
     assert_lines(&term, &["$ foo", "$ bar baz"]);
 
@@ -332,89 +332,89 @@ fn test_kill() {
     term.push_input(" \x7f"); // Make kill commands nonconsecutive
     term.push_input("\x1b\x7f\n");
 
-    assert_read(&mut r, "alpha ");
+    assert_read(&r, "alpha ");
 
     term.push_input("\x19\x19\x1by\n");
 
-    assert_read(&mut r, "beta gamma");
+    assert_read(&r, "beta gamma");
 
     assert_lines(&term, &["$ alpha", "$ beta gamma"]);
 }
 
 #[test]
 fn test_overwrite() {
-    let (term, mut r) = test("foo");
+    let (term, r) = test("foo");
 
     term.push_input(LEFT_ARROW);
     term.push_input(LEFT_ARROW);
     term.push_input(INSERT);
     term.push_input("xxx\n");
 
-    assert_read(&mut r, "fxxx");
+    assert_read(&r, "fxxx");
     assert_lines(&term, &["$ fxxx"]);
 }
 
 #[test]
 fn test_transpose_chars() {
-    let (term, mut r) = test("");
+    let (term, r) = test("");
 
     term.push_input("abc\x14x\n");
-    assert_read(&mut r, "acbx");
+    assert_read(&r, "acbx");
 
     term.push_input("abcde");
     term.push_input(HOME);
     term.push_input(RIGHT_ARROW);
     term.push_input("\x14\x14\n");
-    assert_read(&mut r, "bcade");
+    assert_read(&r, "bcade");
 
     term.push_input("abcde");
     term.push_input("\x1b-3\x14x\n");
-    assert_read(&mut r, "aexbcd");
+    assert_read(&r, "aexbcd");
 
     term.push_input("abcde");
     term.push_input(HOME);
     term.push_input(RIGHT_ARROW);
     term.push_input("\x1b3\x14x\n");
-    assert_read(&mut r, "bcdaxe");
+    assert_read(&r, "bcdaxe");
 
     assert_lines(&term, &["$ acbx", "$ bcade", "$ aexbcd", "$ bcdaxe"]);
 }
 
 #[test]
 fn test_transpose_words() {
-    let (term, mut r) = test("");
+    let (term, r) = test("");
 
     term.resize(Size{lines: 7, columns: 40});
 
     term.push_input("a bb ccc");
     term.push_input("\x1btx\n");
-    assert_read(&mut r, "a ccc bbx");
+    assert_read(&r, "a ccc bbx");
 
     term.push_input("a bb ccc");
     term.push_input("\x1b-\x1btx\n");
-    assert_read(&mut r, "a cccx bb");
+    assert_read(&r, "a cccx bb");
 
     term.push_input("a bb ccc");
     term.push_input(HOME);
     term.push_input(RIGHT_ARROW);
     term.push_input("\x1btx\n");
-    assert_read(&mut r, "bb ax ccc");
+    assert_read(&r, "bb ax ccc");
 
     term.push_input("a bb ccc");
     term.push_input(HOME);
     term.push_input(RIGHT_ARROW);
     term.push_input("\x1bt\x1btx\n");
-    assert_read(&mut r, "bb ccc ax");
+    assert_read(&r, "bb ccc ax");
 
     term.push_input("a bb ccc dddd eeeee");
     term.push_input(HOME);
     term.push_input(RIGHT_ARROW);
     term.push_input("\x1b3\x1btx\n");
-    assert_read(&mut r, "bb ccc dddd ax eeeee");
+    assert_read(&r, "bb ccc dddd ax eeeee");
 
     term.push_input("a bb ccc dddd eeeee");
     term.push_input("\x1b-3\x1btx\n");
-    assert_read(&mut r, "a eeeeex bb ccc dddd");
+    assert_read(&r, "a eeeeex bb ccc dddd");
 
     assert_lines(&term, &["$ a ccc bbx", "$ a cccx bb", "$ bb ax ccc",
         "$ bb ccc ax", "$ bb ccc dddd ax eeeee", "$ a eeeeex bb ccc dddd"]);
