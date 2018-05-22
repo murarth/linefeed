@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use rand::{Rng, weak_rng};
+use rand::{Rng, thread_rng};
 
 use linefeed::{Interface, Prompter, ReadResult};
 use linefeed::chars::escape_sequence;
@@ -87,7 +87,7 @@ fn main() -> io::Result<()> {
                 let iface = interface.clone();
 
                 thread::spawn(move || {
-                    let mut rng = weak_rng();
+                    let mut rng = thread_rng();
                     let mut i = 0usize;
                     loop {
                         writeln!(iface, "[#{}] Concurrent message #{}",

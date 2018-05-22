@@ -27,4 +27,4 @@ winapi = { version = "0.3", features = [
 
 [dev-dependencies]
 assert_matches = "1.2"
-rand = "0.4"
+rand = "0.5"
