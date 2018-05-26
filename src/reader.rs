@@ -149,9 +149,11 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     pub fn read_line(&mut self) -> io::Result<ReadResult> {
         let mut signals = self.lock.report_signals.union(self.lock.ignore_signals);
 
-        // Ctrl-C is always intercepted.
-        // By default, linefeed handles it by clearing the current input state.
-        signals.insert(Signal::Interrupt);
+        if self.lock.catch_signals {
+            // Ctrl-C is always intercepted (unless we're catching no signals).
+            // By default, linefeed handles it by clearing the current input state.
+            signals.insert(Signal::Interrupt);
+        }
 
         // TODO: Try to hold WriteLock continuously when performing multiple
         // write operations in a row. Box<TerminalReader> usage currently makes
