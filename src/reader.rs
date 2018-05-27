@@ -20,7 +20,7 @@ use interface::Interface;
 use prompter::Prompter;
 use sys::path::{env_init_file, system_init_file, user_init_file};
 use terminal::{
-    CursorMode, RawRead, Signal, SignalSet, Size,
+    RawRead, Signal, SignalSet, Size,
     Terminal, TerminalReader,
 };
 use util::{first_char, match_name};
@@ -108,6 +108,10 @@ pub(crate) struct Read<Term: Terminal> {
     pub last_signal: Option<Signal>,
 
     variables: Variables,
+
+    pub read_line_running: bool,
+    pub read_next_raw: bool,
+    pub insert_raw_count: usize,
 }
 
 pub(crate) struct ReadLock<'a, Term: 'a + Terminal> {
@@ -147,30 +151,144 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     ///
     /// [`set_report_signal`]: #method.set_report_signal
     pub fn read_line(&mut self) -> io::Result<ReadResult> {
-        let mut signals = self.lock.report_signals.union(self.lock.ignore_signals);
-
-        if self.lock.catch_signals {
-            // Ctrl-C is always intercepted (unless we're catching no signals).
-            // By default, linefeed handles it by clearing the current input state.
-            signals.insert(Signal::Interrupt);
+        loop {
+            if let Some(res) = self.read_line_step(None)? {
+                return Ok(res);
+            }
         }
+    }
 
-        // TODO: Try to hold WriteLock continuously when performing multiple
-        // write operations in a row. Box<TerminalReader> usage currently makes
-        // this a bit tricky.
-        let block_signals = !self.lock.catch_signals;
-        let state = self.lock.term.prepare(block_signals, signals)?;
+    /// Performs one step of the interactive `read_line` loop.
+    ///
+    /// This method can be used to drive the `read_line` process asynchronously.
+    /// It will wait for input only up to the specified duration, then process
+    /// any available input from the terminal.
+    ///
+    /// If the user completes the input process, `Ok(Some(result))` is returned.
+    /// Otherwise, `Ok(None)` is returned to indicate that the interactive loop
+    /// may continue.
+    ///
+    /// The interactive prompt may be cancelled prematurely using the
+    /// [`cancel_read_line`] method.
+    ///
+    /// See [`read_line`] for details on the return value.
+    ///
+    /// [`cancel_read_line`]: #method.cancel_read_line
+    /// [`read_line`]: #method.read_line
+    pub fn read_line_step(&mut self, timeout: Option<Duration>)
+            -> io::Result<Option<ReadResult>> {
+        self.initialize_read_line()?;
 
-        let res = self.read_line_impl();
+        let state = self.prepare_term()?;
+        let res = self.read_line_step_impl(timeout);
         self.lock.term.restore(state)?;
 
-        // Restore normal cursor mode
-        if self.lock.overwrite_mode {
-            self.iface.lock_write()
-                .set_cursor_mode(CursorMode::Normal)?;
+        res
+    }
+
+    /// Cancels an in-progress `read_line` operation.
+    ///
+    /// This method will reset internal data structures to their original state
+    /// and move the terminal cursor to a new, empty line.
+    ///
+    /// This method is called to prematurely end the interactive loop when
+    /// using the [`read_line_step`] method.
+    ///
+    /// It is not necessary to call this method if using the [`read_line`] method.
+    ///
+    /// [`read_line`]: #method.read_line
+    /// [`read_line_step`]: #method.read_line_step
+    pub fn cancel_read_line(&mut self) -> io::Result<()> {
+        self.end_read_line()
+    }
+
+    fn initialize_read_line(&mut self) -> io::Result<()> {
+        if !self.lock.read_line_running {
+            self.prompter().start_read_line()?;
+            self.lock.read_line_running = true;
+        }
+        Ok(())
+    }
+
+    fn read_line_step_impl(&mut self, timeout: Option<Duration>)
+            -> io::Result<Option<ReadResult>> {
+        let do_read = if self.lock.is_input_available() {
+            // This branch will be taken only if a macro has buffered some input.
+            // We check for input with a zero duration to see if the user has
+            // entered Ctrl-C, e.g. to interrupt an infinitely recursive macro.
+            self.lock.term.wait_for_input(Some(Duration::from_secs(0)))?
+        } else {
+            self.lock.term.wait_for_input(timeout)?
+        };
+
+        if do_read {
+            self.lock.read_input()?;
         }
 
-        res
+        if let Some(size) = self.lock.take_resize() {
+            self.handle_resize(size)?;
+        }
+
+        if let Some(sig) = self.lock.take_signal() {
+            if self.lock.report_signals.contains(sig) {
+                return Ok(Some(ReadResult::Signal(sig)));
+            }
+            if !self.lock.ignore_signals.contains(sig) {
+                self.handle_signal(sig)?;
+            }
+        }
+
+        // If the macro buffer grows in size while input is being processed,
+        // we end this step and let the caller try again. This is to allow
+        // reading Ctrl-C to interrupt (perhaps infinite) macro execution.
+        let mut macro_len = self.lock.data.macro_buffer.len();
+
+        while self.lock.is_input_available() {
+            if let Some(ch) = self.lock.read_char()? {
+                let mut prompter = self.prompter();
+
+                if let Some(r) = prompter.handle_input(ch)? {
+                    prompter.end_read_line()?;
+                    return Ok(Some(r));
+                }
+            }
+
+            let new_macro_len = self.lock.data.macro_buffer.len();
+
+            if new_macro_len >= macro_len {
+                break;
+            }
+
+            macro_len = new_macro_len;
+        }
+
+        Ok(None)
+    }
+
+    fn end_read_line(&mut self) -> io::Result<()> {
+        if self.lock.read_line_running {
+            self.prompter().end_read_line()?;
+            self.lock.read_line_running = false;
+        }
+        Ok(())
+    }
+
+    fn prepare_term(&mut self) -> io::Result<Term::PrepareState> {
+        if self.lock.read_next_raw {
+            self.lock.term.prepare(true, SignalSet::new())
+        } else {
+            let mut signals = self.lock.report_signals.union(self.lock.ignore_signals);
+
+            if self.lock.catch_signals {
+                // Ctrl-C is always intercepted (unless we're catching no signals).
+                // By default, linefeed handles it by clearing the current input state.
+                signals.insert(Signal::Interrupt);
+            }
+
+            let block_signals = !self.lock.catch_signals;
+
+            self.lock.term.prepare(block_signals, signals)
+        }
     }
 
     /// Acquires the `Interface` write lock and returns a `PromptData` instance.
@@ -477,44 +595,6 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
         self.lock.data.evaluate_directive(term, dir)
     }
 
-    fn read_line_impl(&mut self) -> io::Result<ReadResult> {
-        {
-            let mut prompter = self.prompter();
-            prompter.start_read_line()?;
-        }
-
-        let res = loop {
-            if let Some(size) = self.lock.take_resize() {
-                self.handle_resize(size)?;
-            }
-
-            if let Some(sig) = self.lock.take_signal() {
-                if self.lock.report_signals.contains(sig) {
-                    break ReadResult::Signal(sig);
-                }
-                if !self.lock.ignore_signals.contains(sig) {
-                    self.handle_signal(sig)?;
-                }
-            }
-
-            if !self.lock.wait_for_input(None)? {
-                continue;
-            }
-
-            if let Some(ch) = self.lock.read_char()? {
-                let mut prompter = self.prompter();
-
-                if let Some(r) = prompter.handle_input(ch)? {
-                    break r;
-                }
-            }
-        };
-
-        self.prompter().end_read_line();
-
-        Ok(res)
-    }
-
     fn prompter<'b>(&'b mut self) -> Prompter<'b, 'a, Term> {
         Prompter::new(
             &mut self.lock,
@@ -536,10 +616,6 @@ impl<'a, Term: 'a + Terminal> ReadLock<'a, Term> {
         ReadLock{term, data}
     }
 
-    pub(crate) fn term(&mut self) -> &mut TerminalReader<Term> {
-        &mut *self.term
-    }
-
     /// Waits for input data from the terminal.
     ///
     /// Returns whether input data becomes available before the timeout.
@@ -547,8 +623,7 @@ impl<'a, Term: 'a + Terminal> ReadLock<'a, Term> {
     /// If queued input exists (in either the macro or input buffer),
     /// returns `Ok(true)` immediately.
     pub fn wait_for_input(&mut self, timeout: Option<Duration>) -> io::Result<bool> {
-        if !self.data.macro_buffer.is_empty() ||
-                first_char(&self.data.input_buffer)?.is_some() {
+        if self.is_input_available() {
             Ok(true)
         } else {
             self.term.wait_for_input(timeout)
@@ -563,29 +638,12 @@ impl<'a, Term: 'a + Terminal> ReadLock<'a, Term> {
     /// is available, `Ok(None)` is returned.
     pub fn read_char(&mut self) -> io::Result<Option<char>> {
         if let Some(ch) = self.macro_pop() {
-            return Ok(Some(ch));
+            Ok(Some(ch))
+        } else if let Some(ch) = self.decode_input()? {
+            Ok(Some(ch))
+        } else {
+            Ok(None)
         }
-
-        loop {
-            if let Some(ch) = self.decode_input()? {
-                return Ok(Some(ch));
-            }
-
-            match self.term.read(&mut self.data.input_buffer)? {
-                RawRead::Bytes(0) => return Ok(None),
-                RawRead::Bytes(_) => continue,
-                RawRead::Resize(new_size) => {
-                    self.last_resize = Some(new_size);
-                    continue;
-                }
-                RawRead::Signal(sig) => {
-                    self.last_signal = Some(sig);
-                    break;
-                }
-            }
-        }
-
-        Ok(None)
     }
 
     pub fn try_read_char(&mut self, timeout: Option<Duration>) -> io::Result<Option<char>> {
@@ -593,6 +651,27 @@ impl<'a, Term: 'a + Terminal> ReadLock<'a, Term> {
             self.read_char()
         } else {
             Ok(None)
+        }
+    }
+
+    fn read_input(&mut self) -> io::Result<()> {
+        match self.term.read(&mut self.data.input_buffer)? {
+            RawRead::Bytes(_) => (),
+            RawRead::Resize(new_size) => {
+                self.last_resize = Some(new_size);
+            }
+            RawRead::Signal(sig) => {
+                self.last_signal = Some(sig);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn is_input_available(&self) -> bool {
+        !self.data.macro_buffer.is_empty() || match self.peek_input() {
+            Ok(Some(_)) | Err(_) => true,
+            Ok(None) => false
         }
     }
 
@@ -605,16 +684,20 @@ impl<'a, Term: 'a + Terminal> ReadLock<'a, Term> {
     }
 
     fn decode_input(&mut self) -> io::Result<Option<char>> {
+        let res = self.peek_input();
+
+        if let Ok(Some(ch)) = res {
+            self.data.input_buffer.drain(..ch.len_utf8());
+        }
+
+        res
+    }
+
+    fn peek_input(&self) -> io::Result<Option<char>> {
         if self.data.input_buffer.is_empty() {
             Ok(None)
         } else {
-            let r = first_char(&self.data.input_buffer);
-
-            if let Ok(Some(ch)) = r {
-                self.data.input_buffer.drain(..ch.len_utf8());
-            }
-
-            r
+            first_char(&self.data.input_buffer)
         }
     }
 
@@ -690,6 +773,10 @@ impl<Term: Terminal> Read<Term> {
             last_signal: None,
 
             variables: Variables::default(),
+
+            read_line_running: false,
+            read_next_raw: false,
+            insert_raw_count: 0,
         };
 
         r.read_init(term);
@@ -730,6 +817,8 @@ impl<Term: Terminal> Read<Term> {
 
         self.last_resize = None;
         self.last_signal = None;
+
+        self.read_next_raw = false;
     }
 
     pub fn bind_sequence<T>(&mut self, seq: T, cmd: Command) -> Option<Command>

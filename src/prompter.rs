@@ -14,7 +14,7 @@ use complete::Completion;
 use function::Function;
 use reader::{BindingIter, ReadLock, ReadResult};
 use table::{format_columns, Table};
-use terminal::{CursorMode, Signal, SignalSet, Size, Terminal};
+use terminal::{CursorMode, Signal, Size, Terminal};
 use util::{
     get_open_paren, find_matching_paren, first_word,
     longest_common_prefix, repeat_char,
@@ -62,11 +62,30 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
         self.write.draw_prompt()
     }
 
-    pub(crate) fn end_read_line(&mut self) {
+    pub(crate) fn end_read_line(&mut self) -> io::Result<()> {
+        if self.read.overwrite_mode {
+            self.write.set_cursor_mode(CursorMode::Normal)?;
+        }
+        if self.write.is_prompt_drawn {
+            self.write.move_to_end()?;
+            self.write.write_str("\n")?;
+            self.write.is_prompt_drawn = false;
+        }
+        self.read.read_line_running = false;
+
         self.reset_input();
+
+        Ok(())
     }
 
     pub(crate) fn handle_input(&mut self, ch: char) -> io::Result<Option<ReadResult>> {
+        if self.read.read_next_raw {
+            let n = self.read.insert_raw_count;
+            self.insert(n, ch)?;
+            self.read.read_next_raw = false;
+            return Ok(None);
+        }
+
         match self.write.prompt_type {
             PromptType::Normal => {
                 if ch == EOF && self.read.sequence.is_empty() &&
@@ -360,10 +379,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
         match cmd {
             Abort => (),
             AcceptLine => {
-                self.write.move_to_end()?;
-                self.write.write_str("\n")?;
-                self.read.input_accepted = true;
-                self.write.is_prompt_drawn = false;
+                self.accept_input()?;
             }
             Complete => {
                 if !self.read.disable_completion {
@@ -451,12 +467,12 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                     let n = self.read.comment_begin.len();
 
                     self.delete_range(..n)?;
-                    self.read.input_accepted = true;
+                    self.accept_input()?;
                 } else {
                     self.write.move_to(0)?;
                     let s = self.read.comment_begin.clone();
                     self.insert_str(&s)?;
-                    self.read.input_accepted = true;
+                    self.accept_input()?;
                 }
             }
             BackwardChar => {
@@ -699,12 +715,15 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             QuotedInsert => {
-                let ch = {
-                    self.read_raw_char()?
-                };
-
+                self.read.read_next_raw = true;
                 if n > 0 {
-                    self.insert(n as usize, ch)?;
+                    // `input_arg` is cleared when this command ends,
+                    // so we must store the count.
+                    self.read.insert_raw_count = n as usize;
+                } else {
+                    // In case of negative insert count,
+                    // a raw read is still performed, but no text inserted.
+                    self.read.insert_raw_count = 0;
                 }
             }
             OverwriteMode => {
@@ -759,6 +778,14 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
         Ok(())
     }
 
+    fn accept_input(&mut self) -> io::Result<()> {
+        self.write.move_to_end()?;
+        self.write.write_str("\n")?;
+        self.read.input_accepted = true;
+        self.write.is_prompt_drawn = false;
+        Ok(())
+    }
+
     /// Moves the cursor to the given position, waits for 500 milliseconds
     /// (or until next user input), then restores the original cursor position.
     ///
@@ -774,33 +801,6 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
             Some(Duration::from_millis(BLINK_TIMEOUT_MS)))?;
 
         self.write.move_to(orig)
-    }
-
-    /// Reads a raw character from the terminal.
-    ///
-    /// # Notes
-    ///
-    /// Unlike `read_char`, this method waits indefinitely for a character
-    /// to be ready.
-    pub(crate) fn read_raw_char(&mut self) -> io::Result<char> {
-        let write_lock = self.write.term();
-        let state = unsafe { self.read.term()
-            .prepare_with_lock(write_lock, true, SignalSet::new())? };
-
-        let res = loop {
-            if !self.read.wait_for_input(None)? {
-                continue;
-            }
-
-            match self.read.read_char() {
-                Ok(None) => continue,
-                Ok(Some(ch)) => break Ok(ch),
-                Err(e) => break Err(e)
-            }
-        };
-
-        unsafe { self.read.term()
-            .restore_with_lock(write_lock, state).and(res) }
     }
 
     fn build_completions(&mut self) {

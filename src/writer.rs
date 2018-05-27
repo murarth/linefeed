@@ -123,10 +123,6 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         WriteLock{term, data}
     }
 
-    pub(crate) fn term(&mut self) -> &mut TerminalWriter<Term> {
-        &mut *self.term
-    }
-
     pub fn size(&self) -> io::Result<Size> {
         self.term.size()
     }

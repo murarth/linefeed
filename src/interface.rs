@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write as IoWrite};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use command::Command;
 use complete::{Completer};
@@ -134,6 +135,44 @@ impl<Term: Terminal> Interface<Term> {
     /// [`set_report_signal`]: #method.set_report_signal
     pub fn read_line(&self) -> io::Result<ReadResult> {
         self.lock_reader().read_line()
+    }
+
+    /// Performs one step of the interactive `read_line` loop.
+    ///
+    /// This method can be used to drive the `read_line` process asynchronously.
+    /// It will wait for input only up to the specified duration, then process
+    /// any available input from the terminal.
+    ///
+    /// If the user completes the input process, `Ok(Some(result))` is returned.
+    /// Otherwise, `Ok(None)` is returned to indicate that the interactive loop
+    /// may continue.
+    ///
+    /// The interactive prompt may be cancelled prematurely using the
+    /// [`cancel_read_line`] method.
+    ///
+    /// See [`read_line`] for details on the return value.
+    ///
+    /// [`cancel_read_line`]: #method.cancel_read_line
+    /// [`read_line`]: #method.read_line
+    pub fn read_line_step(&self, timeout: Option<Duration>)
+            -> io::Result<Option<ReadResult>> {
+        self.lock_reader().read_line_step(timeout)
+    }
+
+    /// Cancels an in-progress `read_line` operation.
+    ///
+    /// This method will reset internal data structures to their original state
+    /// and move the terminal cursor to a new, empty line.
+    ///
+    /// This method is called to prematurely end the interactive loop when
+    /// using the [`read_line_step`] method.
+    ///
+    /// It is not necessary to call this method if using the [`read_line`] method.
+    ///
+    /// [`read_line`]: #method.read_line
+    /// [`read_line_step`]: #method.read_line_step
+    pub fn cancel_read_line(&self) -> io::Result<()> {
+        self.lock_reader().cancel_read_line()
     }
 
     /// Returns a clone of the current completer instance.
