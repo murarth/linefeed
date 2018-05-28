@@ -7,7 +7,7 @@ use linefeed::{Interface, ReadResult, Signal};
 fn main() -> io::Result<()> {
     let interface = Interface::new("signal-demo")?;
 
-    interface.set_prompt("signals> ");
+    interface.set_prompt("signals> ")?;
 
     // Report all signals to application
     interface.set_report_signal(Signal::Break, true);

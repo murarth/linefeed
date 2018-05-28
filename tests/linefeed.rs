@@ -28,7 +28,7 @@ fn test(input: &str) -> (MemoryTerminal, Interface<MemoryTerminal>) {
 
     let interface = Interface::with_term("test", term.clone()).unwrap();
 
-    interface.set_prompt("$ ");
+    interface.set_prompt("$ ").unwrap();
 
     (term, interface)
 }

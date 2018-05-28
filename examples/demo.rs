@@ -27,7 +27,7 @@ fn main() -> io::Result<()> {
     println!("");
 
     interface.set_completer(Arc::new(DemoCompleter));
-    interface.set_prompt("demo> ");
+    interface.set_prompt("demo> ")?;
 
     if let Err(e) = interface.load_history(HISTORY_FILE) {
         if e.kind() == io::ErrorKind::NotFound {

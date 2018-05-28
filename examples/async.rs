@@ -14,7 +14,7 @@ const TIME_LIMIT: Duration = Duration::from_secs(5);
 fn main() -> io::Result<()> {
     let interface = Interface::new("async-demo")?;
 
-    interface.set_prompt("async-demo> ");
+    interface.set_prompt("async-demo> ")?;
 
     println!("This is a demo of linefeed's asynchronous operation.");
     println!("This demo will terminate in {} seconds.", TIME_LIMIT.as_secs());

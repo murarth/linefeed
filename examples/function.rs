@@ -10,7 +10,7 @@ const DEMO_FN_SEQ: &str = "\x18d"; // Ctrl-X, d
 fn main() -> io::Result<()> {
     let interface = Interface::new("function-demo")?;
 
-    interface.set_prompt("fn-demo> ");
+    interface.set_prompt("fn-demo> ")?;
 
     interface.define_function("demo-function", Arc::new(DemoFunction));
 

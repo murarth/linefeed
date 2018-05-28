@@ -25,7 +25,6 @@ use terminal::{
 };
 use util::{first_char, match_name};
 use variables::{Variable, Variables, VariableIter};
-use writer::PromptData;
 
 /// Default set of string characters
 pub const STRING_CHARS: &str = "\"'";
@@ -255,7 +254,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
 
             let new_macro_len = self.lock.data.macro_buffer.len();
 
-            if new_macro_len >= macro_len {
+            if new_macro_len != 0 && new_macro_len >= macro_len {
                 break;
             }
 
@@ -291,15 +290,33 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
         }
     }
 
-    /// Acquires the `Interface` write lock and returns a `PromptData` instance.
+    /// Sets the input buffer to the given string.
     ///
-    /// The `PromptData` structure enables modification of prompt input data
-    /// before a call to `read_line`. Prompt data is reset when a `read_line`
-    /// call completes.
-    pub fn lock_prompt_data<'b>(&'b mut self) -> PromptData<'b, 'a> {
-        // Borrows from &mut Reader lifetime to prevent prompt data from being
-        // modified while a read_line call is in progress.
-        PromptData::new(self.iface.lock_write_data())
+    /// # Notes
+    ///
+    /// To prevent invalidating the cursor, this method sets the cursor
+    /// position to the end of the new buffer.
+    pub fn set_buffer(&mut self, buf: &str) -> io::Result<()> {
+        if self.lock.read_line_running {
+            self.prompter().set_buffer(buf)
+        } else {
+            self.iface.lock_write_data().set_buffer(buf);
+            Ok(())
+        }
+    }
+
+    /// Sets the cursor position in the input buffer.
+    ///
+    /// # Panics
+    ///
+    /// If the given position is out of bounds or not on a `char` boundary.
+    pub fn set_cursor(&mut self, pos: usize) -> io::Result<()> {
+        if self.lock.read_line_running {
+            self.prompter().set_cursor(pos)
+        } else {
+            self.iface.lock_write_data().set_cursor(pos);
+            Ok(())
+        }
     }
 
     /// Sets the prompt that will be displayed when `read_line` is called.
@@ -311,8 +328,8 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     /// If `prompt` contains any terminal escape sequences (e.g. color codes),
     /// such escape sequences should be immediately preceded by the character
     /// `'\x01'` and immediately followed by the character `'\x02'`.
-    pub fn set_prompt(&mut self, prompt: &str) {
-        self.lock_prompt_data().set_prompt(prompt)
+    pub fn set_prompt(&mut self, prompt: &str) -> io::Result<()> {
+        self.prompter().set_prompt(prompt)
     }
 
     /// Returns the application name

@@ -10,7 +10,7 @@ fn main() -> io::Result<()> {
     let interface = Interface::new("path-completion-demo")?;
 
     interface.set_completer(Arc::new(PathCompleter));
-    interface.set_prompt("path> ");
+    interface.set_prompt("path> ")?;
 
     while let ReadResult::Input(line) = interface.read_line()? {
         println!("read input: {:?}", line);

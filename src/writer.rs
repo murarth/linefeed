@@ -5,7 +5,6 @@ use std::collections::{vec_deque, VecDeque};
 use std::fmt;
 use std::io;
 use std::iter::repeat;
-use std::marker::PhantomData;
 use std::mem::swap;
 use std::ops::{Deref, DerefMut, Range};
 use std::sync::MutexGuard;
@@ -50,21 +49,6 @@ const PROMPT_SEARCH_SUFFIX: usize = 3;
 /// [`Interface::lock_writer`]: ../interface/struct.Interface.html#method.lock_writer
 pub struct Writer<'a, Term: 'a + Terminal> {
     write: WriteLock<'a, Term>,
-}
-
-/// Enables modification of prompt input data before a call to `read_line`.
-///
-/// Prompt data is reset when a `read_line` call completes.
-///
-/// An instance of this type can be constructed using the
-/// [`Reader::lock_prompt_data`] method.
-///
-/// [`Reader::lock_prompt_data`]: ../reader/struct.Reader.html#method.lock_prompt_data
-pub struct PromptData<'a, 'b: 'a> {
-    data: MutexGuard<'b, Write>,
-    // Borrows a lifetime from Reader to prevent prompt data from being modified
-    // while a read_line call is in progress.
-    _marker: PhantomData<&'a ()>,
 }
 
 pub(crate) struct Write {
@@ -134,6 +118,22 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     pub fn update_size(&mut self) -> io::Result<()> {
         let size = self.size()?;
         self.screen_size = size;
+        Ok(())
+    }
+
+    pub fn set_prompt(&mut self, prompt: &str) -> io::Result<()> {
+        let redraw = self.is_prompt_drawn && self.prompt_type.is_normal();
+
+        if redraw {
+            self.clear_full_prompt()?;
+        }
+
+        self.data.set_prompt(prompt);
+
+        if redraw {
+            self.draw_prompt()?;
+        }
+
         Ok(())
     }
 
@@ -290,6 +290,15 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         self.buffer.clear();
         self.buffer.push_str(buf);
         self.new_buffer()
+    }
+
+    pub fn set_cursor(&mut self, pos: usize) -> io::Result<()> {
+        if !self.buffer.is_char_boundary(pos) {
+            panic!("invalid cursor position {} in buffer {:?}",
+                pos, self.buffer);
+        }
+
+        self.move_to(pos)
     }
 
     pub fn set_cursor_mode(&mut self, mode: CursorMode) -> io::Result<()> {
@@ -964,79 +973,6 @@ impl<'a, Term: Terminal> Drop for Writer<'a, Term> {
     }
 }
 
-impl<'a, 'b: 'a> PromptData<'a, 'b> {
-    pub(crate) fn new(data: MutexGuard<'b, Write>) -> Self {
-        PromptData{data, _marker: PhantomData}
-    }
-
-    /// Returns the current contents of the input buffer.
-    pub fn buffer(&self) -> &str {
-        &self.data.buffer
-    }
-
-    /// Returns a mutable reference to the current input buffer.
-    ///
-    /// # Notes
-    ///
-    /// To prevent invalidating the cursor, this method sets the cursor
-    /// position to `0`.
-    pub fn buffer_mut(&mut self) -> &mut String {
-        self.data.cursor = 0;
-        &mut self.data.buffer
-    }
-
-    /// Sets the input buffer to the given string.
-    ///
-    /// # Notes
-    ///
-    /// To prevent invalidating the cursor, this method sets the cursor
-    /// position to `0`.
-    pub fn set_buffer(&mut self, s: &str) {
-        self.data.cursor = 0;
-        self.data.buffer.clear();
-        self.data.buffer.push_str(s);
-    }
-
-    /// Returns the current cursor position.
-    pub fn cursor(&self) -> usize {
-        self.data.cursor
-    }
-
-    /// Sets the cursor position in the input buffer.
-    ///
-    /// # Panics
-    ///
-    /// If the given position is out of bounds or not on a `char` boundary.
-    pub fn set_cursor(&mut self, pos: usize) {
-        if !self.data.buffer.is_char_boundary(pos) {
-            panic!("invalid cursor position {} in buffer {:?}",
-                pos, self.data.buffer);
-        }
-
-        self.data.cursor = pos;
-    }
-
-    /// Sets the prompt that will be displayed when `read_line` is called.
-    ///
-    /// # Notes
-    ///
-    /// If `prompt` contains any terminal escape sequences (e.g. color codes),
-    /// such escape sequences should be immediately preceded by the character
-    /// `'\x01'` and immediately followed by the character `'\x02'`.
-    pub fn set_prompt(&mut self, prompt: &str) {
-        match prompt.rfind('\n') {
-            Some(pos) => {
-                self.data.prompt_prefix = prompt[..pos + 1].to_owned();
-                self.data.prompt_suffix = prompt[pos + 1..].to_owned();
-            }
-            None => {
-                self.data.prompt_prefix.clear();
-                self.data.prompt_suffix = prompt.to_owned();
-            }
-        }
-    }
-}
-
 impl<'a, Term: 'a + Terminal> Deref for WriteLock<'a, Term> {
     type Target = Write;
 
@@ -1098,6 +1034,34 @@ impl Write {
         self.input_arg = Digit::None;
         self.explicit_arg = false;
     }
+
+    pub fn set_buffer(&mut self, buf: &str) {
+        self.buffer.clear();
+        self.buffer.push_str(buf);
+        self.cursor = buf.len();
+    }
+
+    pub fn set_cursor(&mut self, pos: usize) {
+        if !self.buffer.is_char_boundary(pos) {
+            panic!("invalid cursor position {} in buffer {:?}",
+                pos, self.buffer);
+        }
+
+        self.cursor = pos;
+    }
+
+    pub fn set_prompt(&mut self, prompt: &str) {
+        match prompt.rfind('\n') {
+            Some(pos) => {
+                self.prompt_prefix = prompt[..pos + 1].to_owned();
+                self.prompt_suffix = prompt[pos + 1..].to_owned();
+            }
+            None => {
+                self.prompt_prefix.clear();
+                self.prompt_suffix = prompt.to_owned();
+            }
+        }
+    }
 }
 
 /// Maximum value of digit input
@@ -1150,11 +1114,17 @@ impl From<char> for Digit {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PromptType {
     Normal,
     Number,
     Search,
+}
+
+impl PromptType {
+    pub(crate) fn is_normal(&self) -> bool {
+        *self == PromptType::Normal
+    }
 }
 
 /// Iterator over `Interface` history entries

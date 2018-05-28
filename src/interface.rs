@@ -210,7 +210,7 @@ impl<Term: Terminal> Interface<Term> {
     /// If `prompt` contains any terminal escape sequences (e.g. color codes),
     /// such escape sequences should be immediately preceded by the character
     /// `'\x01'` and immediately followed by the character `'\x02'`.
-    pub fn set_prompt(&self, prompt: &str) {
+    pub fn set_prompt(&self, prompt: &str) -> io::Result<()> {
         self.lock_reader().set_prompt(prompt)
     }
 

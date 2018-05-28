@@ -174,6 +174,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     }
 
     /// Sets the buffer to the given value.
+    ///
     /// The cursor is moved to the end of the buffer.
     pub fn set_buffer(&mut self, buf: &str) -> io::Result<()> {
         self.write.set_buffer(buf)
@@ -190,7 +191,18 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     ///
     /// If the given position is out of bounds or is not aligned to `char` boundaries.
     pub fn set_cursor(&mut self, pos: usize) -> io::Result<()> {
-        self.write.move_to(pos)
+        self.write.set_cursor(pos)
+    }
+
+    /// Sets the prompt that will be displayed when `read_line` is called.
+    ///
+    /// # Notes
+    ///
+    /// If `prompt` contains any terminal escape sequences (e.g. color codes),
+    /// such escape sequences should be immediately preceded by the character
+    /// `'\x01'` and immediately followed by the character `'\x02'`.
+    pub fn set_prompt(&mut self, prompt: &str) -> io::Result<()> {
+        self.write.set_prompt(prompt)
     }
 
     /// Returns the size of the terminal at the last draw operation.
@@ -246,6 +258,10 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     /// Selects the history entry currently being edited by the user.
     ///
     /// Setting the entry to `None` will result in editing the input buffer.
+    ///
+    /// # Panics
+    ///
+    /// If the index is out of bounds.
     pub fn select_history_entry(&mut self, new: Option<usize>) -> io::Result<()> {
         self.write.select_history_entry(new)
     }
