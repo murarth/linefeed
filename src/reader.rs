@@ -292,6 +292,8 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
 
     /// Sets the input buffer to the given string.
     ///
+    /// This method internally acquires the `Interface` write lock.
+    ///
     /// # Notes
     ///
     /// To prevent invalidating the cursor, this method sets the cursor
@@ -306,6 +308,8 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     }
 
     /// Sets the cursor position in the input buffer.
+    ///
+    /// This method internally acquires the `Interface` write lock.
     ///
     /// # Panics
     ///
@@ -330,6 +334,77 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     /// `'\x01'` and immediately followed by the character `'\x02'`.
     pub fn set_prompt(&mut self, prompt: &str) -> io::Result<()> {
         self.prompter().set_prompt(prompt)
+    }
+
+    /// Adds a line to history.
+    ///
+    /// This method internally acquires the `Interface` write lock.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
+    pub fn add_history(&self, line: String) {
+        if !self.lock.read_line_running {
+            self.iface.lock_write().add_history(line);
+        }
+    }
+
+    /// Adds a line to history, unless it is identical to the most recent entry.
+    ///
+    /// This method internally acquires the `Interface` write lock.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
+    pub fn add_history_unique(&self, line: String) {
+        if !self.lock.read_line_running {
+            self.iface.lock_write().add_history_unique(line);
+        }
+    }
+
+    /// Removes all history entries.
+    ///
+    /// This method internally acquires the `Interface` write lock.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
+    pub fn clear_history(&self) {
+        if !self.lock.read_line_running {
+            self.iface.lock_write().clear_history();
+        }
+    }
+
+    /// Removes the history entry at the given index.
+    ///
+    /// This method internally acquires the `Interface` write lock.
+    ///
+    /// If the index is out of bounds, this method has no effect.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
+    pub fn remove_history(&self, idx: usize) {
+        if !self.lock.read_line_running {
+            self.iface.lock_write().remove_history(idx);
+        }
+    }
+
+    /// Sets the maximum number of history entries.
+    ///
+    /// This method internally acquires the `Interface` write lock.
+    ///
+    /// If `n` is less than the current number of history entries,
+    /// the oldest entries are truncated to meet the given requirement.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
+    pub fn set_history_size(&self, n: usize) {
+        if !self.lock.read_line_running {
+            self.iface.lock_write().set_history_size(n);
+        }
+    }
+
+    /// Truncates history to the only the most recent `n` entries.
+    ///
+    /// This method internally acquires the `Interface` write lock.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
+    pub fn truncate_history(&self, n: usize) {
+        if !self.lock.read_line_running {
+            self.iface.lock_write().truncate_history(n);
+        }
     }
 
     /// Returns the application name

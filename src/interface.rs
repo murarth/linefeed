@@ -201,19 +201,6 @@ impl<Term: Terminal> Interface<Term> {
         self.lock_reader().set_variable(name, value)
     }
 
-    /// Sets the prompt that will be displayed when `read_line` is called.
-    ///
-    /// This method internally acquires the `Interface` write lock.
-    ///
-    /// # Notes
-    ///
-    /// If `prompt` contains any terminal escape sequences (e.g. color codes),
-    /// such escape sequences should be immediately preceded by the character
-    /// `'\x01'` and immediately followed by the character `'\x02'`.
-    pub fn set_prompt(&self, prompt: &str) -> io::Result<()> {
-        self.lock_reader().set_prompt(prompt)
-    }
-
     /// Returns whether the given `Signal` is ignored.
     pub fn ignore_signal(&self, signal: Signal) -> bool {
         self.lock_reader().ignore_signal(signal)
@@ -373,49 +360,85 @@ impl<Term: Terminal> Interface<Term> {
 ///
 /// If either lock is already held, the method will block until it is released.
 impl<Term: Terminal> Interface<Term> {
-    // Some of these methods don't appear to require a read lock, but do acquire
+    /// Sets the prompt that will be displayed when `read_line` is called.
+    ///
+    /// # Notes
+    ///
+    /// If `prompt` contains any terminal escape sequences (e.g. color codes),
+    /// such escape sequences should be immediately preceded by the character
+    /// `'\x01'` and immediately followed by the character `'\x02'`.
+    pub fn set_prompt(&self, prompt: &str) -> io::Result<()> {
+        self.lock_reader().set_prompt(prompt)
+    }
+
+    /// Sets the input buffer to the given string.
+    ///
+    /// # Notes
+    ///
+    /// To prevent invalidating the cursor, this method sets the cursor
+    /// position to the end of the new buffer.
+    pub fn set_buffer(&self, buf: &str) -> io::Result<()> {
+        self.lock_reader().set_buffer(buf)
+    }
+
+    /// Sets the cursor position in the input buffer.
+    ///
+    /// # Panics
+    ///
+    /// If the given position is out of bounds or not on a `char` boundary.
+    pub fn set_cursor(&self, pos: usize) -> io::Result<()> {
+        self.lock_reader().set_cursor(pos)
+    }
+
+    // History methods don't appear to require a read lock, but do acquire
     // it nonetheless because any operation that truncates history may interefere
     // with an ongoing `read_line` call. Therefore, the read lock is acquired
-    // to ensure that no `read_line` call is in progress.
+    // to check whether a `read_line` call is in progress.
 
     /// Adds a line to history.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
     pub fn add_history(&self, line: String) {
-        let _reader = self.lock_read();
-        self.lock_write().add_history(line);
+        self.lock_reader().add_history(line);
     }
 
     /// Adds a line to history, unless it is identical to the most recent entry.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
     pub fn add_history_unique(&self, line: String) {
-        let _reader = self.lock_read();
-        self.lock_write().add_history_unique(line);
+        self.lock_reader().add_history_unique(line);
     }
 
     /// Removes all history entries.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
     pub fn clear_history(&self) {
-        let _reader = self.lock_read();
-        self.lock_write().clear_history();
+        self.lock_reader().clear_history();
     }
 
     /// Removes the history entry at the given index.
     ///
     /// If the index is out of bounds, this method has no effect.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
     pub fn remove_history(&self, idx: usize) {
-        let _reader = self.lock_read();
-        self.lock_write().remove_history(idx);
+        self.lock_reader().remove_history(idx);
     }
 
     /// Sets the maximum number of history entries.
     ///
     /// If `n` is less than the current number of history entries,
     /// the oldest entries are truncated to meet the given requirement.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
     pub fn set_history_size(&self, n: usize) {
-        let _reader = self.lock_read();
-        self.lock_write().set_history_size(n);
+        self.lock_reader().set_history_size(n);
     }
 
     /// Truncates history to the only the most recent `n` entries.
+    ///
+    /// If a `read_line` call is in progress, this method has no effect.
     pub fn truncate_history(&self, n: usize) {
-        let _reader = self.lock_read();
-        self.lock_write().truncate_history(n);
+        self.lock_reader().truncate_history(n);
     }
 }
