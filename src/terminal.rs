@@ -169,6 +169,11 @@ impl DefaultTerminal {
     pub fn stderr() -> io::Result<DefaultTerminal> {
         mortal::Terminal::stderr().map(DefaultTerminal)
     }
+
+    unsafe fn cast_writer<'a>(writer: &'a mut TerminalWriter<Self>)
+            -> &'a mut TerminalWriteGuard<'a> {
+        &mut *(writer as *mut _ as *mut TerminalWriteGuard)
+    }
 }
 
 impl Terminal for DefaultTerminal {
@@ -203,7 +208,7 @@ impl<'a> TerminalReader<DefaultTerminal> for TerminalReadGuard<'a> {
             lock: &mut TerminalWriter<DefaultTerminal>,
             block_signals: bool, report_signals: SignalSet)
             -> io::Result<PrepareState> {
-        let lock = &mut *(lock as *mut _ as *mut TerminalWriteGuard);
+        let lock = DefaultTerminal::cast_writer(lock);
 
         self.prepare_with_lock(lock, PrepareConfig{
             block_signals,
@@ -221,7 +226,7 @@ impl<'a> TerminalReader<DefaultTerminal> for TerminalReadGuard<'a> {
     unsafe fn restore_with_lock(&mut self,
             lock: &mut TerminalWriter<DefaultTerminal>, state: PrepareState)
             -> io::Result<()> {
-        let lock = &mut *(lock as *mut _ as *mut TerminalWriteGuard);
+        let lock = DefaultTerminal::cast_writer(lock);
         self.restore_with_lock(lock, state)
     }
 

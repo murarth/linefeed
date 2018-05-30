@@ -30,6 +30,8 @@ struct DemoFunction;
 impl<Term: Terminal> Function<Term> for DemoFunction {
     fn execute(&self, prompter: &mut Prompter<Term>, _count: i32, _ch: char) -> io::Result<()> {
         assert_eq!(prompter.sequence(), DEMO_FN_SEQ);
-        prompter.insert_str("<demo function executed>")
+        let mut writer = prompter.writer()?;
+
+        writeln!(writer, "demo function executed")
     }
 }

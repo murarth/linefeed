@@ -23,7 +23,7 @@ use util::{
     word_start, word_end, RangeArgument,
 };
 use variables::VariableIter;
-use writer::{display_str, Digit, Display, HistoryIter, PromptType, WriteLock};
+use writer::{display_str, Digit, Display, HistoryIter, PromptType, Writer, WriteLock};
 
 /// Timeout, in milliseconds, to wait for input when "blinking"
 const BLINK_TIMEOUT_MS: u64 = 500;
@@ -48,6 +48,15 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     pub(crate) fn new(read: &'a mut ReadLock<'b, Term>, write: WriteLock<'b, Term>)
             -> Prompter<'a, 'b, Term> {
         Prompter{read, write}
+    }
+
+    /// Returns a `Writer` instance using the currently held write lock.
+    ///
+    /// This method will erase the prompt, allowing output to be written
+    /// without corrupting the prompt text. The prompt will be redrawn
+    /// when the `Writer` instance is dropped.
+    pub fn writer<'c>(&'c mut self) -> io::Result<Writer<'c, 'b, Term>> {
+        Writer::with_ref(&mut self.write)
     }
 
     /// Resets input state at the start of `read_line`

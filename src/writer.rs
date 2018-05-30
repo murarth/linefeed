@@ -47,8 +47,13 @@ const PROMPT_SEARCH_SUFFIX: usize = 3;
 ///
 /// [`Interface`]: ../interface/struct.Interface.html
 /// [`Interface::lock_writer`]: ../interface/struct.Interface.html#method.lock_writer
-pub struct Writer<'a, Term: 'a + Terminal> {
-    write: WriteLock<'a, Term>,
+pub struct Writer<'a, 'b: 'a, Term: 'b + Terminal> {
+    write: WriterImpl<'a, 'b, Term>,
+}
+
+enum WriterImpl<'a, 'b: 'a, Term: 'b + Terminal> {
+    Mutex(WriteLock<'b, Term>),
+    MutRef(&'a mut WriteLock<'b, Term>),
 }
 
 pub(crate) struct Write {
@@ -925,13 +930,21 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
 }
 
-impl<'a, Term: Terminal> Writer<'a, Term> {
-    pub(crate) fn new(mut write: WriteLock<'a, Term>) -> io::Result<Writer<'a, Term>> {
+impl<'a, 'b: 'a, Term: 'b + Terminal> Writer<'a, 'b, Term> {
+    fn new(mut write: WriterImpl<'a, 'b, Term>) -> io::Result<Self> {
         if write.is_prompt_drawn {
             write.clear_full_prompt()?;
         }
 
         Ok(Writer{write})
+    }
+
+    pub(crate) fn with_mutex(write: WriteLock<'b, Term>) -> io::Result<Self> {
+        Writer::new(WriterImpl::Mutex(write))
+    }
+
+    pub(crate) fn with_ref(write: &'a mut WriteLock<'b, Term>) -> io::Result<Self> {
+        Writer::new(WriterImpl::MutRef(write))
     }
 
     /// Returns an iterator over history entries.
@@ -964,7 +977,7 @@ impl<'a, Term: Terminal> Writer<'a, Term> {
     }
 }
 
-impl<'a, Term: Terminal> Drop for Writer<'a, Term> {
+impl<'a, 'b: 'a, Term: 'b + Terminal> Drop for Writer<'a, 'b, Term> {
     fn drop(&mut self) {
         if self.write.is_prompt_drawn {
             // There's not really anything useful to be done with this error.
@@ -1124,6 +1137,26 @@ pub(crate) enum PromptType {
 impl PromptType {
     pub(crate) fn is_normal(&self) -> bool {
         *self == PromptType::Normal
+    }
+}
+
+impl<'a, 'b, Term: 'b + Terminal> Deref for WriterImpl<'a, 'b, Term> {
+    type Target = WriteLock<'b, Term>;
+
+    fn deref(&self) -> &WriteLock<'b, Term> {
+        match *self {
+            WriterImpl::Mutex(ref m) => m,
+            WriterImpl::MutRef(ref m) => m,
+        }
+    }
+}
+
+impl<'a, 'b: 'a, Term: 'b + Terminal> DerefMut for WriterImpl<'a, 'b, Term> {
+    fn deref_mut(&mut self) -> &mut WriteLock<'b, Term> {
+        match *self {
+            WriterImpl::Mutex(ref mut m) => m,
+            WriterImpl::MutRef(ref mut m) => m,
+        }
     }
 }
 

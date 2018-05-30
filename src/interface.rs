@@ -92,7 +92,7 @@ impl<Term: Terminal> Interface<Term> {
     /// allowing output to be written without corrupting the prompt text.
     /// The prompt will be redrawn when the `Writer` instance is dropped.
     pub fn lock_writer(&self) -> io::Result<Writer<Term>> {
-        Writer::new(self.lock_write())
+        Writer::with_mutex(self.lock_write())
     }
 
     fn lock_read(&self) -> ReadLock<Term> {
