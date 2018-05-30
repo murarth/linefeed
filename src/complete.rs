@@ -327,7 +327,7 @@ fn needs_escape(ch: char) -> bool {
 
 fn split_path(path: &str) -> (Option<&str>, &str) {
     match path.rfind(is_separator) {
-        Some(pos) => (Some(&path[..pos + 1]), &path[pos + 1..]),
+        Some(pos) => (Some(&path[..pos]), &path[pos + 1..]),
         None => (None, path)
     }
 }
