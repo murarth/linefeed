@@ -100,7 +100,9 @@ fn main() -> io::Result<()> {
                 thread_id += 1;
             }
             "history" => {
-                for (i, entry) in interface.lock_writer()?.history().enumerate() {
+                let w = interface.lock_writer_erase()?;
+
+                for (i, entry) in w.history().enumerate() {
                     println!("{}: {}", i, entry);
                 }
             }

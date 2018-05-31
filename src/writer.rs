@@ -42,11 +42,13 @@ const PROMPT_SEARCH_SUFFIX: usize = 3;
 /// Holds a lock on terminal write operations.
 /// See [`Interface`] for more information about concurrent operations.
 ///
-/// An instance of this type can be constructed using the
-/// [`Interface::lock_writer`] method.
+/// An instance of this type can be constructed using either the
+/// [`Interface::lock_writer_append`] or the [`Interface::lock_writer_erase`]
+/// method.
 ///
 /// [`Interface`]: ../interface/struct.Interface.html
-/// [`Interface::lock_writer`]: ../interface/struct.Interface.html#method.lock_writer
+/// [`Interface::lock_writer_append`]: ../interface/struct.Interface.html#method.lock_writer_append
+/// [`Interface::lock_writer_erase`]: ../interface/struct.Interface.html#method.lock_writer_erase
 pub struct Writer<'a, 'b: 'a, Term: 'b + Terminal> {
     write: WriterImpl<'a, 'b, Term>,
 }
@@ -927,24 +929,28 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         self.input_arg = digit;
         self.explicit_arg = true;
     }
-
 }
 
 impl<'a, 'b: 'a, Term: 'b + Terminal> Writer<'a, 'b, Term> {
-    fn new(mut write: WriterImpl<'a, 'b, Term>) -> io::Result<Self> {
+    fn new(mut write: WriterImpl<'a, 'b, Term>, clear: bool) -> io::Result<Self> {
         if write.is_prompt_drawn {
-            write.clear_full_prompt()?;
+            if clear {
+                write.clear_full_prompt()?;
+            } else {
+                write.move_to_end()?;
+                write.write_str("\n")?;
+            }
         }
 
         Ok(Writer{write})
     }
 
-    pub(crate) fn with_mutex(write: WriteLock<'b, Term>) -> io::Result<Self> {
-        Writer::new(WriterImpl::Mutex(write))
+    pub(crate) fn with_lock(write: WriteLock<'b, Term>, clear: bool) -> io::Result<Self> {
+        Writer::new(WriterImpl::Mutex(write), clear)
     }
 
-    pub(crate) fn with_ref(write: &'a mut WriteLock<'b, Term>) -> io::Result<Self> {
-        Writer::new(WriterImpl::MutRef(write))
+    pub(crate) fn with_ref(write: &'a mut WriteLock<'b, Term>, clear: bool) -> io::Result<Self> {
+        Writer::new(WriterImpl::MutRef(write), clear)
     }
 
     /// Returns an iterator over history entries.

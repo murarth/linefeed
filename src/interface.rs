@@ -88,11 +88,29 @@ impl<Term: Terminal> Interface<Term> {
 
     /// Acquires the write lock and returns a `Writer` instance.
     ///
+    /// If a `read_line` call is in progress, this method will move the cursor
+    /// to a new line after the prompt, allowing output to be written without
+    /// corrupting the prompt text. The prompt will be redrawn when the `Writer`
+    /// instance is dropped.
+    ///
+    /// To instead erase the prompt and write text, use [`lock_writer_erase`].
+    ///
+    /// [`lock_writer_erase`]: #method.lock_writer_erase
+    pub fn lock_writer_append(&self) -> io::Result<Writer<Term>> {
+        Writer::with_lock(self.lock_write(), false)
+    }
+
+    /// Acquires the write lock and returns a `Writer` instance.
+    ///
     /// If a `read_line` call is in progress, this method will erase the prompt,
     /// allowing output to be written without corrupting the prompt text.
     /// The prompt will be redrawn when the `Writer` instance is dropped.
-    pub fn lock_writer(&self) -> io::Result<Writer<Term>> {
-        Writer::with_mutex(self.lock_write())
+    ///
+    /// To instead write text after the prompt, use [`lock_writer_append`].
+    ///
+    /// [`lock_writer_append`]: #method.lock_writer_append
+    pub fn lock_writer_erase(&self) -> io::Result<Writer<Term>> {
+        Writer::with_lock(self.lock_write(), true)
     }
 
     fn lock_read(&self) -> ReadLock<Term> {
@@ -340,15 +358,18 @@ impl<Term: Terminal> Interface<Term> {
     /// Therefore, the written text should end with a newline. If the `writeln!`
     /// macro is used, a newline is automatically added to the end of the text.
     ///
+    /// To instead write text after the prompt, use [`lock_writer_append`].
+    ///
     /// [`read_line`]: #method.read_line
     /// [`writeln!`]: https://doc.rust-lang.org/std/macro.writeln.html
+    /// [`lock_writer_append`]: #method.lock_writer_append
     pub fn write_fmt(&self, args: fmt::Arguments) -> io::Result<()> {
         let s = args.to_string();
         self.write_str(&s)
     }
 
     fn write_str(&self, line: &str) -> io::Result<()> {
-        self.lock_writer()?.write_str(line)
+        self.lock_writer_erase()?.write_str(line)
     }
 }
 

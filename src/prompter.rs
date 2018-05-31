@@ -52,11 +52,28 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
 
     /// Returns a `Writer` instance using the currently held write lock.
     ///
+    /// This method will move the cursor to a new line after the prompt,
+    /// allowing output to be written without corrupting the prompt text.
+    /// The prompt will be redrawn when the `Writer` instance is dropped.
+    ///
+    /// To instead erase the prompt and write text, use [`writer_erase`].
+    ///
+    /// [`writer_erase`]: #method.writer_erase
+    pub fn writer_append<'c>(&'c mut self) -> io::Result<Writer<'c, 'b, Term>> {
+        Writer::with_ref(&mut self.write, false)
+    }
+
+    /// Returns a `Writer` instance using the currently held write lock.
+    ///
     /// This method will erase the prompt, allowing output to be written
     /// without corrupting the prompt text. The prompt will be redrawn
     /// when the `Writer` instance is dropped.
-    pub fn writer<'c>(&'c mut self) -> io::Result<Writer<'c, 'b, Term>> {
-        Writer::with_ref(&mut self.write)
+    ///
+    /// To instead write text after the prompt, use [`writer_append`].
+    ///
+    /// [`writer_append`]: #method.writer_append
+    pub fn writer_erase<'c>(&'c mut self) -> io::Result<Writer<'c, 'b, Term>> {
+        Writer::with_ref(&mut self.write, true)
     }
 
     /// Resets input state at the start of `read_line`
