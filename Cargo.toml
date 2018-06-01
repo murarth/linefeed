@@ -26,5 +26,6 @@ winapi = { version = "0.3", features = [
     "winerror", "winuser" ] }
 
 [dev-dependencies]
+ansi_term = "0.11"
 assert_matches = "1.2"
 rand = "0.5"
