@@ -77,12 +77,15 @@ fn main() -> io::Result<()> {
                             }
                         }
                     }
-                    _ => ()
+                    _ => println!("read input: {:?}", line)
                 }
             }
             ReadResult::Signal(sig) => {
-                println!();
-                println!("signal received: {:?}", sig);
+                if sig == Signal::Interrupt {
+                    interface.cancel_read_line()?;
+                }
+
+                let _ = writeln!(interface, "signal received: {:?}", sig);
             }
         }
     }

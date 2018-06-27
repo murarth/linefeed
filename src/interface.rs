@@ -141,15 +141,18 @@ impl<Term: Terminal> Interface<Term> {
 impl<Term: Terminal> Interface<Term> {
     /// Interactively reads a line from the terminal device.
     ///
-    /// If the user issues an end-of-file, `ReadResult::Eof` is returned.
+    /// User input is collected until one of the following conditions is met:
     ///
-    /// If a reported signal (see [`set_report_signal`]) is received,
-    /// it is returned as `ReadResult::Signal(_)`.
+    /// * If the user issues an end-of-file, `ReadResult::Eof` is returned.
+    /// * When the user inputs a newline (`'\n'`), the resulting input
+    ///   (not containing a trailing newline character) is returned as
+    ///   `ReadResult::Input(_)`.
+    /// * When a reported signal (see [`set_report_signal`]) is received,
+    ///   it is returned as `ReadResult::Signal(_)`. The `read_line` operation may
+    ///   then be either resumed with another call to `read_line` or ended by
+    ///   calling [`cancel_read_line`].
     ///
-    /// Otherwise, user input is collected until a newline is entered.
-    /// The resulting input (not containing a trailing newline character)
-    /// is returned as `ReadResult::Input(_)`.
-    ///
+    /// [`cancel_read_line`]: #method.cancel_read_line
     /// [`set_report_signal`]: #method.set_report_signal
     pub fn read_line(&self) -> io::Result<ReadResult> {
         self.lock_reader().read_line()
