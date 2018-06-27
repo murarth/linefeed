@@ -301,6 +301,11 @@ impl<Term: Terminal> Interface<Term> {
 ///
 /// If the write lock is already held, the method will block until it is released.
 impl<Term: Terminal> Interface<Term> {
+    /// Returns the current input buffer.
+    pub fn buffer(&self) -> String {
+        self.lock_write().buffer.to_owned()
+    }
+
     /// Returns the current number of history entries.
     pub fn history_len(&self) -> usize {
         self.lock_write().history_len()
