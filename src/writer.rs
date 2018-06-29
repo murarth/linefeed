@@ -692,11 +692,11 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
             let buf = self.buffer.clone();
             self.move_within(cursor, pos, &buf)?;
             self.draw_buffer(pos)?;
-            self.cursor += s.len();
         } else {
             self.draw_buffer(cursor)?;
-            self.cursor += s.len();
         }
+
+        self.cursor += s.len();
 
         let len = self.buffer.len();
         self.move_from(len)

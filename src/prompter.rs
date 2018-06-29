@@ -1333,7 +1333,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
 
     /// Insert a string at the current cursor position.
     ///
-    /// The cursor position remains the same.
+    /// The cursor is placed at the end of the new string.
     pub fn insert_str(&mut self, s: &str) -> io::Result<()> {
         self.write.insert_str(s)
     }
