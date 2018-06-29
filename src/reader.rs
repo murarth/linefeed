@@ -240,28 +240,31 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
             }
         }
 
-        // If the macro buffer grows in size while input is being processed,
-        // we end this step and let the caller try again. This is to allow
-        // reading Ctrl-C to interrupt (perhaps infinite) macro execution.
-        let mut macro_len = self.lock.data.macro_buffer.len();
+        // Acquire the write lock and process all available input
+        {
+            let mut prompter = self.prompter();
 
-        while self.lock.is_input_available() {
-            if let Some(ch) = self.lock.read_char()? {
-                let mut prompter = self.prompter();
+            // If the macro buffer grows in size while input is being processed,
+            // we end this step and let the caller try again. This is to allow
+            // reading Ctrl-C to interrupt (perhaps infinite) macro execution.
+            let mut macro_len = prompter.read.data.macro_buffer.len();
 
-                if let Some(r) = prompter.handle_input(ch)? {
-                    prompter.end_read_line()?;
-                    return Ok(Some(r));
+            while prompter.read.is_input_available() {
+                if let Some(ch) = prompter.read.read_char()? {
+                    if let Some(r) = prompter.handle_input(ch)? {
+                        prompter.end_read_line()?;
+                        return Ok(Some(r));
+                    }
                 }
+
+                let new_macro_len = prompter.read.data.macro_buffer.len();
+
+                if new_macro_len != 0 && new_macro_len >= macro_len {
+                    break;
+                }
+
+                macro_len = new_macro_len;
             }
-
-            let new_macro_len = self.lock.data.macro_buffer.len();
-
-            if new_macro_len != 0 && new_macro_len >= macro_len {
-                break;
-            }
-
-            macro_len = new_macro_len;
         }
 
         Ok(None)

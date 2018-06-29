@@ -40,7 +40,7 @@ const BLINK_TIMEOUT_MS: u64 = 500;
 /// [`Interface`]: ../interface/struct.Interface.html
 /// [`read_line`]: ../interface/struct.Interface.html#method.read_line
 pub struct Prompter<'a, 'b: 'a, Term: 'b + Terminal> {
-    read: &'a mut ReadLock<'b, Term>,
+    pub(crate) read: &'a mut ReadLock<'b, Term>,
     write: WriteLock<'b, Term>,
 }
 
