@@ -75,8 +75,10 @@ pub(crate) struct Write {
 
     /// Portion of prompt up to and including the final newline
     pub prompt_prefix: String,
+    prompt_prefix_len: usize,
     /// Portion of prompt after the final newline
     pub prompt_suffix: String,
+    prompt_suffix_len: usize,
 
     /// Current type of prompt
     pub prompt_type: PromptType,
@@ -525,38 +527,6 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         pos.map(|pos| (idx, pos))
     }
 
-    pub fn display_size(&self, s: &str, start_col: usize) -> usize {
-        let width = self.screen_size.columns;
-        let mut col = start_col;
-
-        let disp = Display{
-            allow_tab: true,
-            allow_newline: true,
-            .. Display::default()
-        };
-
-        for ch in s.chars().flat_map(|ch| display(ch, disp)) {
-            let n = match ch {
-                '\n' => width - (col % width),
-                '\t' => TAB_STOP - (col % TAB_STOP),
-                ch if is_combining_mark(ch) => 0,
-                ch if is_wide(ch) => {
-                    if col % width == width - 1 {
-                        // Can't render a fullwidth character into last column
-                        3
-                    } else {
-                        2
-                    }
-                }
-                _ => 1
-            };
-
-            col += n;
-        }
-
-        col - start_col
-    }
-
     pub fn add_history(&mut self, line: String) {
         if self.history.len() == self.history_size {
             self.history.pop_front();
@@ -772,7 +742,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
     fn prompt_length(&self) -> usize {
         match self.prompt_type {
-            PromptType::Normal => self.prompt_suffix_length(),
+            PromptType::Normal => self.prompt_suffix_len,
             PromptType::Number => {
                 let n = number_len(self.input_arg.to_i32());
                 PROMPT_NUM_PREFIX + PROMPT_NUM_SUFFIX + n
@@ -791,16 +761,6 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
                 prefix + n + PROMPT_SEARCH_SUFFIX
             }
         }
-    }
-
-    fn prompt_prefix_length(&self) -> usize {
-        let pre_virt = filter_visible(&self.prompt_prefix);
-        self.display_size(&pre_virt, 0)
-    }
-
-    fn prompt_suffix_length(&self) -> usize {
-        let pre_virt = filter_visible(&self.prompt_suffix);
-        self.display_size(&pre_virt, 0)
     }
 
     fn line_col(&self, pos: usize) -> (usize, usize) {
@@ -845,7 +805,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     }
 
     pub fn clear_full_prompt(&mut self) -> io::Result<()> {
-        let prefix_lines = self.prompt_prefix_length() / self.screen_size.columns;
+        let prefix_lines = self.prompt_prefix_len / self.screen_size.columns;
         let (line, _) = self.line_col(self.cursor);
         self.term.move_up(prefix_lines + line)?;
         self.term.move_to_first_column()?;
@@ -1020,7 +980,9 @@ impl Write {
             is_prompt_drawn: false,
 
             prompt_prefix: String::new(),
+            prompt_prefix_len: 0,
             prompt_suffix: String::new(),
+            prompt_suffix_len: 0,
 
             prompt_type: PromptType::Normal,
 
@@ -1070,16 +1032,51 @@ impl Write {
     }
 
     pub fn set_prompt(&mut self, prompt: &str) {
-        match prompt.rfind('\n') {
-            Some(pos) => {
-                self.prompt_prefix = prompt[..pos + 1].to_owned();
-                self.prompt_suffix = prompt[pos + 1..].to_owned();
-            }
-            None => {
-                self.prompt_prefix.clear();
-                self.prompt_suffix = prompt.to_owned();
-            }
+        let (pre, suf) = match prompt.rfind('\n') {
+            Some(pos) => (&prompt[..pos + 1], &prompt[pos + 1..]),
+            None => (&prompt[..0], prompt)
+        };
+
+        self.prompt_prefix = pre.to_owned();
+        self.prompt_suffix = suf.to_owned();
+
+        let pre_virt = filter_visible(pre);
+        self.prompt_prefix_len = self.display_size(&pre_virt, 0);
+
+        let suf_virt = filter_visible(suf);
+        self.prompt_suffix_len = self.display_size(&suf_virt, 0);
+    }
+
+    pub fn display_size(&self, s: &str, start_col: usize) -> usize {
+        let width = self.screen_size.columns;
+        let mut col = start_col;
+
+        let disp = Display{
+            allow_tab: true,
+            allow_newline: true,
+            .. Display::default()
+        };
+
+        for ch in s.chars().flat_map(|ch| display(ch, disp)) {
+            let n = match ch {
+                '\n' => width - (col % width),
+                '\t' => TAB_STOP - (col % TAB_STOP),
+                ch if is_combining_mark(ch) => 0,
+                ch if is_wide(ch) => {
+                    if col % width == width - 1 {
+                        // Can't render a fullwidth character into last column
+                        3
+                    } else {
+                        2
+                    }
+                }
+                _ => 1
+            };
+
+            col += n;
         }
+
+        col - start_col
     }
 }
 
