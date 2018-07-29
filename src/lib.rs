@@ -14,7 +14,7 @@
 //! # fn run() -> io::Result<()> {
 //! let mut reader = Interface::new("my-application")?;
 //!
-//! reader.set_prompt("my-app> ");
+//! reader.set_prompt("my-app> ")?;
 //!
 //! while let ReadResult::Input(input) = reader.read_line()? {
 //!     println!("got input {:?}", input);
