@@ -8,7 +8,7 @@
 //! # Basic example
 //!
 //! ```no_run
-//! use std::io;
+//! # use std::io;
 //! use linefeed::{Interface, ReadResult};
 //!
 //! # fn run() -> io::Result<()> {
