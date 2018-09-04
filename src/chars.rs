@@ -123,16 +123,14 @@ pub fn unctrl(c: char) -> char {
     ((c as u8) | CTRL_BIT) as char
 }
 
-const CASE_BIT: u8 = 0x20;
-
 /// Returns the lowercase character corresponding to the given control character.
 pub fn unctrl_lower(c: char) -> char {
-    ((c as u8) | CTRL_BIT | CASE_BIT) as char
+    unctrl(c).to_ascii_lowercase()
 }
 
 #[cfg(test)]
 mod test {
-    use super::{ctrl, unctrl, escape_sequence, parse_char_name};
+    use super::{ctrl, unctrl, unctrl_lower, escape_sequence, parse_char_name};
 
     #[test]
     fn test_ctrl() {
@@ -145,6 +143,12 @@ mod test {
         assert_eq!(unctrl('\t'), 'I');
         assert_eq!(unctrl('\n'), 'J');
         assert_eq!(unctrl('\r'), 'M');
+    }
+
+    #[test]
+    fn test_unctrl() {
+        assert_eq!(unctrl('\x1d'), ']');
+        assert_eq!(unctrl_lower('\x1d'), ']');
     }
 
     #[test]
