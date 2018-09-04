@@ -10,6 +10,10 @@ const DEMO_FN_SEQ: &str = "\x18d"; // Ctrl-X, d
 fn main() -> io::Result<()> {
     let interface = Interface::new("function-demo")?;
 
+    println!("This example demonstrates a custom function implementation.");
+    println!("Enter the sequence Ctrl-X, followed by 'd' to execute the function.");
+    println!();
+
     interface.set_prompt("fn-demo> ")?;
 
     interface.define_function("demo-function", Arc::new(DemoFunction));
