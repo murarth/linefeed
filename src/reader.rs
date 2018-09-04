@@ -8,7 +8,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::slice;
 use std::sync::{Arc, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mortal::SequenceMap;
 
@@ -108,9 +108,8 @@ pub(crate) struct Read<Term: Terminal> {
 
     variables: Variables,
 
-    pub read_line_running: bool,
-    pub read_next_raw: bool,
-    pub insert_raw_count: usize,
+    pub state: InputState,
+    pub max_wait_duration: Option<Duration>,
 }
 
 pub(crate) struct ReadLock<'a, Term: 'a + Terminal> {
@@ -129,6 +128,24 @@ pub enum ReadResult {
     Input(String),
     /// Reported signal was received
     Signal(Signal),
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum InputState {
+    Inactive,
+    NewSequence,
+    ContinueSequence{
+        expiry: Option<Instant>,
+    },
+    Number,
+    CharSearch{
+        n: usize,
+        backward: bool,
+    },
+    TextSearch,
+    CompleteIntro,
+    CompleteMore(usize),
+    QuotedInsert(usize),
 }
 
 impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
@@ -205,9 +222,8 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     }
 
     fn initialize_read_line(&mut self) -> io::Result<()> {
-        if !self.lock.read_line_running {
+        if !self.lock.is_active() {
             self.prompter().start_read_line()?;
-            self.lock.read_line_running = true;
         }
         Ok(())
     }
@@ -220,6 +236,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
             // entered Ctrl-C, e.g. to interrupt an infinitely recursive macro.
             self.lock.term.wait_for_input(Some(Duration::from_secs(0)))?
         } else {
+            let timeout = limit_duration(timeout, self.lock.max_wait_duration);
             self.lock.term.wait_for_input(timeout)?
         };
 
@@ -243,6 +260,8 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
         // Acquire the write lock and process all available input
         {
             let mut prompter = self.prompter();
+
+            prompter.check_expire_timeout()?;
 
             // If the macro buffer grows in size while input is being processed,
             // we end this step and let the caller try again. This is to allow
@@ -271,15 +290,14 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     }
 
     fn end_read_line(&mut self) -> io::Result<()> {
-        if self.lock.read_line_running {
+        if self.lock.is_active() {
             self.prompter().end_read_line()?;
-            self.lock.read_line_running = false;
         }
         Ok(())
     }
 
     fn prepare_term(&mut self) -> io::Result<Term::PrepareState> {
-        if self.lock.read_next_raw {
+        if self.read_next_raw() {
             self.lock.term.prepare(true, SignalSet::new())
         } else {
             let mut signals = self.lock.report_signals.union(self.lock.ignore_signals);
@@ -296,6 +314,13 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
         }
     }
 
+    fn read_next_raw(&self) -> bool {
+        match self.lock.state {
+            InputState::QuotedInsert(_) => true,
+            _ => false
+        }
+    }
+
     /// Sets the input buffer to the given string.
     ///
     /// This method internally acquires the `Interface` write lock.
@@ -305,7 +330,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     /// To prevent invalidating the cursor, this method sets the cursor
     /// position to the end of the new buffer.
     pub fn set_buffer(&mut self, buf: &str) -> io::Result<()> {
-        if self.lock.read_line_running {
+        if self.lock.is_active() {
             self.prompter().set_buffer(buf)
         } else {
             self.iface.lock_write_data().set_buffer(buf);
@@ -321,7 +346,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     ///
     /// If the given position is out of bounds or not on a `char` boundary.
     pub fn set_cursor(&mut self, pos: usize) -> io::Result<()> {
-        if self.lock.read_line_running {
+        if self.lock.is_active() {
             self.prompter().set_cursor(pos)
         } else {
             self.iface.lock_write_data().set_cursor(pos);
@@ -348,7 +373,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     ///
     /// If a `read_line` call is in progress, this method has no effect.
     pub fn add_history(&self, line: String) {
-        if !self.lock.read_line_running {
+        if !self.lock.is_active() {
             self.iface.lock_write().add_history(line);
         }
     }
@@ -359,7 +384,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     ///
     /// If a `read_line` call is in progress, this method has no effect.
     pub fn add_history_unique(&self, line: String) {
-        if !self.lock.read_line_running {
+        if !self.lock.is_active() {
             self.iface.lock_write().add_history_unique(line);
         }
     }
@@ -370,7 +395,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     ///
     /// If a `read_line` call is in progress, this method has no effect.
     pub fn clear_history(&self) {
-        if !self.lock.read_line_running {
+        if !self.lock.is_active() {
             self.iface.lock_write().clear_history();
         }
     }
@@ -383,7 +408,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     ///
     /// If a `read_line` call is in progress, this method has no effect.
     pub fn remove_history(&self, idx: usize) {
-        if !self.lock.read_line_running {
+        if !self.lock.is_active() {
             self.iface.lock_write().remove_history(idx);
         }
     }
@@ -397,7 +422,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     ///
     /// If a `read_line` call is in progress, this method has no effect.
     pub fn set_history_size(&self, n: usize) {
-        if !self.lock.read_line_running {
+        if !self.lock.is_active() {
             self.iface.lock_write().set_history_size(n);
         }
     }
@@ -408,7 +433,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     ///
     /// If a `read_line` call is in progress, this method has no effect.
     pub fn truncate_history(&self, n: usize) {
-        if !self.lock.read_line_running {
+        if !self.lock.is_active() {
             self.iface.lock_write().truncate_history(n);
         }
     }
@@ -714,20 +739,6 @@ impl<'a, Term: 'a + Terminal> ReadLock<'a, Term> {
         ReadLock{term, data}
     }
 
-    /// Waits for input data from the terminal.
-    ///
-    /// Returns whether input data becomes available before the timeout.
-    ///
-    /// If queued input exists (in either the macro or input buffer),
-    /// returns `Ok(true)` immediately.
-    pub fn wait_for_input(&mut self, timeout: Option<Duration>) -> io::Result<bool> {
-        if self.is_input_available() {
-            Ok(true)
-        } else {
-            self.term.wait_for_input(timeout)
-        }
-    }
-
     /// Reads the next character of input.
     ///
     /// Performs a non-blocking read from the terminal, if necessary.
@@ -739,14 +750,6 @@ impl<'a, Term: 'a + Terminal> ReadLock<'a, Term> {
             Ok(Some(ch))
         } else if let Some(ch) = self.decode_input()? {
             Ok(Some(ch))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn try_read_char(&mut self, timeout: Option<Duration>) -> io::Result<Option<char>> {
-        if self.wait_for_input(timeout)? {
-            self.read_char()
         } else {
             Ok(None)
         }
@@ -872,9 +875,8 @@ impl<Term: Terminal> Read<Term> {
 
             variables: Variables::default(),
 
-            read_line_running: false,
-            read_next_raw: false,
-            insert_raw_count: 0,
+            state: InputState::Inactive,
+            max_wait_duration: None,
         };
 
         r.read_init(term);
@@ -901,6 +903,13 @@ impl<Term: Terminal> Read<Term> {
         self.macro_buffer.insert_str(0, seq);
     }
 
+    pub fn is_active(&self) -> bool {
+        match self.state {
+            InputState::Inactive => false,
+            _ => true
+        }
+    }
+
     pub fn reset_data(&mut self) {
         self.input_accepted = false;
         self.overwrite_mode = false;
@@ -915,8 +924,6 @@ impl<Term: Terminal> Read<Term> {
 
         self.last_resize = None;
         self.last_signal = None;
-
-        self.read_next_raw = false;
     }
 
     pub fn bind_sequence<T>(&mut self, seq: T, cmd: Command) -> Option<Command>
@@ -1131,4 +1138,11 @@ fn default_bindings() -> SequenceMap<Cow<'static, str>, Command> {
         ("\x1b8".into(), DigitArgument),    // Escape, 8
         ("\x1b9".into(), DigitArgument),    // Escape, 9
     ])
+}
+
+fn limit_duration(dur: Option<Duration>, max: Option<Duration>) -> Option<Duration> {
+    match (dur, max) {
+        (dur, None) | (None, dur) => dur,
+        (Some(dur), Some(max)) => Some(dur.min(max)),
+    }
 }

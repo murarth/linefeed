@@ -1,5 +1,7 @@
 //! Provides access to terminal write operations
 
+#![allow(dead_code)] // XXX
+
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::collections::{vec_deque, VecDeque};
 use std::fmt;
@@ -8,6 +10,7 @@ use std::iter::repeat;
 use std::mem::swap;
 use std::ops::{Deref, DerefMut, Range};
 use std::sync::MutexGuard;
+use std::time::{Duration, Instant};
 
 use chars::{is_ctrl, unctrl, ESCAPE, RUBOUT};
 use reader::{START_INVISIBLE, END_INVISIBLE};
@@ -16,6 +19,11 @@ use util::{
     backward_char, forward_char, backward_search_char, forward_search_char,
     filter_visible, is_combining_mark, is_wide, RangeArgument,
 };
+
+/// Duration to wait for input when "blinking"
+pub(crate) const BLINK_DURATION: Duration = Duration::from_millis(500);
+
+const COMPLETE_MORE: &'static str = "--More--";
 
 /// Default maximum history size
 const MAX_HISTORY: usize = !0;
@@ -65,6 +73,8 @@ pub(crate) struct Write {
     pub backup_buffer: String,
     /// Position of the cursor
     pub cursor: usize,
+    /// Position of the cursor if currently performing a blink
+    blink: Option<Blink>,
 
     pub history: VecDeque<String>,
     pub history_index: Option<usize>,
@@ -130,7 +140,44 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         Ok(())
     }
 
+    pub fn blink(&mut self, pos: usize) -> io::Result<()> {
+        self.expire_blink()?;
+
+        let orig = self.cursor;
+        self.move_to(pos)?;
+        self.cursor = orig;
+
+        let expiry = Instant::now() + BLINK_DURATION;
+
+        self.blink = Some(Blink{
+            pos,
+            expiry,
+        });
+
+        Ok(())
+    }
+
+    pub fn check_expire_blink(&mut self, now: Instant) -> io::Result<bool> {
+        if let Some(blink) = self.data.blink {
+            if now >= blink.expiry {
+                self.expire_blink()?;
+            }
+        }
+
+        Ok(self.blink.is_none())
+    }
+
+    pub fn expire_blink(&mut self) -> io::Result<()> {
+        if let Some(blink) = self.data.blink.take() {
+            self.move_from(blink.pos)?;
+        }
+
+        Ok(())
+    }
+
     pub fn set_prompt(&mut self, prompt: &str) -> io::Result<()> {
+        self.expire_blink()?;
+
         let redraw = self.is_prompt_drawn && self.prompt_type.is_normal();
 
         if redraw {
@@ -148,10 +195,19 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
     /// Draws the prompt and current input, assuming the cursor is at column 0
     pub fn draw_prompt(&mut self) -> io::Result<()> {
-        let pfx = self.prompt_prefix.clone();
-        self.draw_raw_prompt(&pfx)?;
-
+        self.draw_prompt_prefix()?;
         self.draw_prompt_suffix()
+    }
+
+    pub fn draw_prompt_prefix(&mut self) -> io::Result<()> {
+        match self.prompt_type {
+            // Prefix is not drawn when completions are shown
+            PromptType::CompleteMore => Ok(()),
+            _ => {
+                let pfx = self.prompt_prefix.clone();
+                self.draw_raw_prompt(&pfx)
+            }
+        }
     }
 
     pub fn draw_prompt_suffix(&mut self) -> io::Result<()> {
@@ -179,7 +235,14 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
                 self.draw_text(0, &s)?;
                 let pos = self.cursor;
 
-                return self.move_within(ent.len(), pos, &ent);
+                let (lines, cols) = self.move_delta(ent.len(), pos, &ent);
+                return self.move_rel(lines, cols);
+            }
+            PromptType::CompleteIntro(n) => {
+                return self.term.write(&complete_intro(n));
+            }
+            PromptType::CompleteMore => {
+                return self.term.write(COMPLETE_MORE);
             }
         }
 
@@ -190,10 +253,8 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
     pub fn redraw_prompt(&mut self, new_prompt: PromptType) -> io::Result<()> {
         self.clear_prompt()?;
-
         self.prompt_type = new_prompt;
-
-        self.draw_prompt()
+        self.draw_prompt_suffix()
     }
 
     /// Draws a portion of the buffer, starting from the given cursor position
@@ -295,6 +356,8 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     }
 
     pub fn set_buffer(&mut self, buf: &str) -> io::Result<()> {
+        self.expire_blink()?;
+
         self.move_to(0)?;
         self.buffer.clear();
         self.buffer.push_str(buf);
@@ -302,6 +365,8 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     }
 
     pub fn set_cursor(&mut self, pos: usize) -> io::Result<()> {
+        self.expire_blink()?;
+
         if !self.buffer.is_char_boundary(pos) {
             panic!("invalid cursor position {} in buffer {:?}",
                 pos, self.buffer);
@@ -401,7 +466,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         self.cursor = self.prev_cursor;
 
         self.prompt_type = PromptType::Normal;
-        self.draw_prompt()
+        self.draw_prompt_suffix()
     }
 
     fn show_search_match(&mut self, next_match: Option<(Option<usize>, usize)>)
@@ -417,7 +482,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         }
 
         self.prompt_type = PromptType::Search;
-        self.draw_prompt()
+        self.draw_prompt_suffix()
     }
 
     pub fn search_history_update(&mut self) -> io::Result<()> {
@@ -689,8 +754,8 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         if moves_combining && cursor != 0 {
             let pos = backward_char(1, &self.buffer, self.cursor);
             // Move without updating the cursor
-            let buf = self.buffer.clone();
-            self.move_within(cursor, pos, &buf)?;
+            let (lines, cols) = self.move_delta(cursor, pos, &self.buffer);
+            self.move_rel(lines, cols)?;
             self.draw_buffer(pos)?;
         } else {
             self.draw_buffer(cursor)?;
@@ -740,7 +805,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         self.move_from(len)
     }
 
-    fn prompt_length(&self) -> usize {
+    fn prompt_suffix_length(&self) -> usize {
         match self.prompt_type {
             PromptType::Normal => self.prompt_suffix_len,
             PromptType::Number => {
@@ -760,11 +825,22 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
                 let n = self.display_size(&self.search_buffer, prefix);
                 prefix + n + PROMPT_SEARCH_SUFFIX
             }
+            PromptType::CompleteIntro(n) => complete_intro(n).len(),
+            PromptType::CompleteMore => COMPLETE_MORE.len(),
         }
     }
 
     fn line_col(&self, pos: usize) -> (usize, usize) {
-        self.line_col_with(pos, &self.buffer, self.prompt_length())
+        let prompt_len = self.prompt_suffix_length();
+
+        match self.prompt_type {
+            PromptType::CompleteIntro(_) |
+            PromptType::CompleteMore => {
+                let width = self.screen_size.columns;
+                (prompt_len / width, prompt_len % width)
+            }
+            _ => self.line_col_with(pos, &self.buffer, prompt_len)
+        }
     }
 
     fn line_col_with(&self, pos: usize, buf: &str, start_col: usize) -> (usize, usize) {
@@ -812,7 +888,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         self.term.clear_to_screen_end()
     }
 
-    fn clear_prompt(&mut self) -> io::Result<()> {
+    pub(crate) fn clear_prompt(&mut self) -> io::Result<()> {
         let (line, _) = self.line_col(self.cursor);
 
         self.term.move_up(line)?;
@@ -822,16 +898,14 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
     /// Move back to true cursor position from some other position
     pub fn move_from(&mut self, pos: usize) -> io::Result<()> {
-        let cursor = self.cursor;
-        let buf = self.buffer.clone();
-        self.move_within(pos, cursor, &buf)
+        let (lines, cols) = self.move_delta(pos, self.cursor, &self.buffer);
+        self.move_rel(lines, cols)
     }
 
     pub fn move_to(&mut self, pos: usize) -> io::Result<()> {
         if pos != self.cursor {
-            let cursor = self.cursor;
-            let buf = self.buffer.clone();
-            self.move_within(cursor, pos, &buf)?;
+            let (lines, cols) = self.move_delta(self.cursor, pos, &self.buffer);
+            self.move_rel(lines, cols)?;
             self.cursor = pos;
         }
 
@@ -849,14 +923,13 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
     /// Moves from `old` to `new` cursor position, using the given buffer
     /// as current input.
-    fn move_within(&mut self, old: usize, new: usize, buf: &str) -> io::Result<()> {
-        let prompt_len = self.prompt_length();
+    fn move_delta(&self, old: usize, new: usize, buf: &str) -> (isize, isize) {
+        let prompt_len = self.prompt_suffix_length();
         let (old_line, old_col) = self.line_col_with(old, buf, prompt_len);
         let (new_line, new_col) = self.line_col_with(new, buf, prompt_len);
 
-        self.move_rel(
-            new_line as isize - old_line as isize,
-            new_col as isize - old_col as isize)
+        (new_line as isize - old_line as isize,
+         new_col as isize - old_col as isize)
     }
 
     fn move_rel(&mut self, lines: isize, cols: isize) -> io::Result<()> {
@@ -891,8 +964,16 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     }
 }
 
+#[derive(Copy, Clone)]
+struct Blink {
+    pos: usize,
+    expiry: Instant,
+}
+
 impl<'a, 'b: 'a, Term: 'b + Terminal> Writer<'a, 'b, Term> {
     fn new(mut write: WriterImpl<'a, 'b, Term>, clear: bool) -> io::Result<Self> {
+        write.expire_blink()?;
+
         if write.is_prompt_drawn {
             if clear {
                 write.clear_full_prompt()?;
@@ -967,11 +1048,12 @@ impl<'a, Term: 'a + Terminal> DerefMut for WriteLock<'a, Term> {
 }
 
 impl Write {
-    pub fn new() -> Write {
+    pub fn new(screen_size: Size) -> Write {
         Write{
             buffer: String::new(),
             backup_buffer: String::new(),
             cursor: 0,
+            blink: None,
 
             history: VecDeque::new(),
             history_index: None,
@@ -996,7 +1078,7 @@ impl Write {
             input_arg: Digit::None,
             explicit_arg: false,
 
-            screen_size: Size{lines: 0, columns: 0},
+            screen_size,
         }
     }
 
@@ -1135,6 +1217,8 @@ pub(crate) enum PromptType {
     Normal,
     Number,
     Search,
+    CompleteIntro(usize),
+    CompleteMore,
 }
 
 impl PromptType {
@@ -1255,6 +1339,10 @@ pub(crate) fn display_str<'a>(s: &'a str, style: Display) -> Cow<'a, str> {
     } else {
         Owned(s.chars().flat_map(|ch| display(ch, style)).collect())
     }
+}
+
+fn complete_intro(n: usize) -> String {
+    format!("Display all {} possibilities? (y/n)", n)
 }
 
 fn number_len(n: i32) -> usize {

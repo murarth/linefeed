@@ -4,7 +4,7 @@ use std::io;
 use std::mem::replace;
 use std::ops::Range;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::Instant;
 
 use mortal::FindResult;
 
@@ -12,8 +12,8 @@ use chars::{is_ctrl, is_printable, DELETE, EOF};
 use command::{Category, Command};
 use complete::Completion;
 use function::Function;
-use reader::{BindingIter, ReadLock, ReadResult};
-use table::{format_columns, Table};
+use reader::{BindingIter, InputState, ReadLock, ReadResult};
+use table::{format_columns, Line, Table};
 use terminal::{CursorMode, Signal, Size, Terminal};
 use util::{
     get_open_paren, find_matching_paren, first_word,
@@ -23,10 +23,10 @@ use util::{
     word_start, word_end, RangeArgument,
 };
 use variables::VariableIter;
-use writer::{display_str, Digit, Display, HistoryIter, PromptType, Writer, WriteLock};
-
-/// Timeout, in milliseconds, to wait for input when "blinking"
-const BLINK_TIMEOUT_MS: u64 = 500;
+use writer::{
+    BLINK_DURATION, display_str,
+    Digit, Display, HistoryIter, PromptType, Writer, WriteLock,
+};
 
 /// Provides access to the current state of input while a `read_line` call
 /// is in progress.
@@ -83,12 +83,15 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     }
 
     pub(crate) fn start_read_line(&mut self) -> io::Result<()> {
+        self.read.state = InputState::NewSequence;
         self.write.is_prompt_drawn = true;
         self.write.update_size()?;
         self.write.draw_prompt()
     }
 
     pub(crate) fn end_read_line(&mut self) -> io::Result<()> {
+        self.write.expire_blink()?;
+
         if self.read.overwrite_mode {
             self.write.set_cursor_mode(CursorMode::Normal)?;
         }
@@ -97,31 +100,25 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
             self.write.write_str("\n")?;
             self.write.is_prompt_drawn = false;
         }
-        self.read.read_line_running = false;
 
+        self.read.state = InputState::Inactive;
         self.reset_input();
 
         Ok(())
     }
 
     pub(crate) fn handle_input(&mut self, ch: char) -> io::Result<Option<ReadResult>> {
-        if self.read.read_next_raw {
-            let n = self.read.insert_raw_count;
-            self.insert(n, ch)?;
-            self.read.read_next_raw = false;
-            return Ok(None);
-        }
+        self.write.expire_blink()?;
 
-        match self.write.prompt_type {
-            PromptType::Normal => {
-                if ch == EOF && self.read.sequence.is_empty() &&
-                        self.write.buffer.is_empty() {
+        match self.read.state {
+            InputState::Inactive => panic!("input received in inactive state"),
+            InputState::NewSequence => {
+                if ch == EOF && self.write.buffer.is_empty() {
                     self.write.write_str("\n")?;
                     self.write.is_prompt_drawn = false;
                     return Ok(Some(ReadResult::Eof));
                 } else {
                     self.read.sequence.push(ch);
-
                     self.execute_sequence()?;
 
                     if self.read.input_accepted {
@@ -130,11 +127,22 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                     }
                 }
             }
-            PromptType::Number => {
-                if let Some(digit) = ch.to_digit(10).map(|u| u as i32) {
-                    self.write.input_arg.input(digit);
+            InputState::ContinueSequence{expiry: _} => {
+                self.read.sequence.push(ch);
+
+                self.execute_sequence()?;
+
+                if self.read.input_accepted {
+                    let s = replace(&mut self.write.buffer, String::new());
+                    return Ok(Some(ReadResult::Input(s)));
+                }
+            }
+            InputState::Number => {
+                if let Some(digit) = ch.to_digit(10) {
+                    self.write.input_arg.input(digit as i32);
 
                     if self.write.input_arg.is_out_of_bounds() {
+                        self.read.state = InputState::NewSequence;
                         self.write.input_arg = Digit::None;
                         self.write.explicit_arg = false;
                         self.write.redraw_prompt(PromptType::Normal)?;
@@ -142,11 +150,22 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                         self.write.redraw_prompt(PromptType::Number)?;
                     }
                 } else {
+                    self.read.state = InputState::NewSequence;
                     self.write.redraw_prompt(PromptType::Normal)?;
                     self.read.macro_buffer.insert(0, ch);
                 }
             }
-            PromptType::Search => {
+            InputState::CharSearch{n, backward} => {
+                if n != 0 {
+                    if backward {
+                        self.write.backward_search_char(n, ch)?;
+                    } else {
+                        self.write.forward_search_char(n, ch)?;
+                    }
+                }
+                self.read.state = InputState::NewSequence;
+            }
+            InputState::TextSearch => {
                 if ch == DELETE {
                     {
                         let write = &mut *self.write;
@@ -158,7 +177,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                     self.abort_search_history()?;
                 } else if is_ctrl(ch) {
                     // End search, handle input after cancelling
-                    self.write.end_search_history()?;
+                    self.end_search_history()?;
                     self.read.macro_buffer.insert(0, ch);
                 } else {
                     {
@@ -168,6 +187,48 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                     }
                     self.write.search_history_update()?;
                 }
+            }
+            InputState::CompleteIntro => {
+                match ch {
+                    'y' | 'Y' | ' ' => {
+                        self.write.write_str("\n")?;
+                        self.show_completions_page(0)?;
+                    }
+                    '\r' | '\n' => {
+                        self.write.write_str("\n")?;
+                        self.show_completions_line(0)?;
+                    }
+                    'q' | 'Q' |
+                    'n' | 'N' | DELETE => {
+                        self.write.write_str("\n")?;
+                        self.end_page_completions()?;
+                    }
+                    _ => ()
+                }
+            }
+            InputState::CompleteMore(offset) => {
+                match ch {
+                    'y' | 'Y' | ' ' => {
+                        self.write.clear_prompt()?;
+                        self.show_completions_page(offset)?;
+                    }
+                    '\r' | '\n' => {
+                        self.write.clear_prompt()?;
+                        self.show_completions_line(offset)?;
+                    }
+                    'q' | 'Q' |
+                    'n' | 'N' | DELETE => {
+                        self.write.clear_prompt()?;
+                        self.end_page_completions()?;
+                    }
+                    _ => ()
+                }
+            }
+            InputState::QuotedInsert(n) => {
+                if n != 0 {
+                    self.insert(n, ch)?;
+                }
+                self.read.state = InputState::NewSequence;
             }
         }
 
@@ -316,78 +377,78 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     ///
     /// If no bindings match and the sequence contains only printable characters,
     /// the sequence will be inserted as text.
+    ///
+    /// Returns `true` if a complete sequence was found and executed.
     fn execute_sequence(&mut self) -> io::Result<()> {
-        if let Some(cmd) = self.complete_sequence()? {
-            let ch = self.read.sequence.chars().last().unwrap();
-            let n = self.write.input_arg.to_i32();
+        match self.find_binding(&self.read.sequence) {
+            FindResult::Found(cmd) => {
+                let ch = self.read.sequence.chars().last().unwrap();
+                let n = self.write.input_arg.to_i32();
 
-            self.execute_command(cmd, n, ch)?;
-            self.read.sequence.clear();
+                self.read.state = InputState::NewSequence;
+                self.execute_command(cmd, n, ch)?;
+                self.read.sequence.clear();
+            }
+            FindResult::NotFound => {
+                self.read.state = InputState::NewSequence;
+                self.insert_first_char()?;
+            }
+            FindResult::Incomplete => {
+                let expiry = None;
+                self.read.state = InputState::ContinueSequence{expiry};
+            }
+            FindResult::Undecided(_) => {
+                let expiry = self.keyseq_expiry();
+                self.read.state = InputState::ContinueSequence{expiry};
+            }
         }
 
         Ok(())
     }
 
-    fn complete_sequence(&mut self) -> io::Result<Option<Command>> {
-        let mut final_cmd = match self.find_binding(&self.read.sequence) {
-            FindResult::Found(cmd) => return Ok(Some(cmd)),
-            FindResult::Undecided(cmd) => cmd,
-            FindResult::Incomplete => return Ok(None),
-            FindResult::NotFound => {
-                // Execute SelfInsert on the first character, if it is printable.
-                // Then, queue the remaining characters so they may be
-                // reinterpreted.
-                let (first, rest) = {
-                    let mut chars = self.read.sequence.chars();
+    fn force_execute_sequence(&mut self) -> io::Result<()> {
+        self.read.state = InputState::NewSequence;
 
-                    (chars.next().unwrap(), chars.as_str().to_owned())
-                };
+        match self.find_binding(&self.read.sequence) {
+            FindResult::Found(cmd) |
+            FindResult::Undecided(cmd) => {
+                let ch = self.read.sequence.chars().last().unwrap();
+                let n = self.write.input_arg.to_i32();
 
+                self.execute_command(cmd, n, ch)?;
                 self.read.sequence.clear();
-
-                if is_printable(first) {
-                    let n = self.write.input_arg.to_i32();
-                    self.execute_command(Command::SelfInsert, n, first)?;
-                }
-
-                if !rest.is_empty() {
-                    self.read.queue_input(&rest);
-                }
-
-                return Ok(None);
             }
-        };
-
-        let mut seq_len = self.read.sequence.len();
-
-        loop {
-            let t = self.read.keyseq_timeout;
-
-            match self.read.try_read_char(t)? {
-                Some(ch) => self.read.sequence.push(ch),
-                None => break
+            FindResult::NotFound => {
+                self.insert_first_char()?;
             }
-
-            match self.find_binding(&self.read.sequence) {
-                FindResult::Found(cmd) => {
-                    final_cmd = cmd;
-                    seq_len = self.read.sequence.len();
-                    break;
-                }
-                FindResult::Undecided(cmd) => {
-                    final_cmd = cmd;
-                    seq_len = self.read.sequence.len();
-                }
-                FindResult::Incomplete => (),
-                FindResult::NotFound => break
-            }
+            FindResult::Incomplete => unreachable!(),
         }
 
-        let seq_rest = self.read.sequence[seq_len..].to_owned();
-        self.read.queue_input(&seq_rest);
-        self.read.sequence.truncate(seq_len);
+        Ok(())
+    }
 
-        Ok(Some(final_cmd))
+    /// Execute the command `SelfInsert` on the first character in the input
+    /// sequence, if it is printable. Then, queue the remaining characters
+    /// so they may be reinterpreted.
+    fn insert_first_char(&mut self) -> io::Result<()> {
+        let (first, rest) = {
+            let mut chars = self.read.sequence.chars();
+
+            (chars.next().unwrap(), chars.as_str().to_owned())
+        };
+
+        self.read.sequence.clear();
+
+        if is_printable(first) {
+            let n = self.write.input_arg.to_i32();
+            self.execute_command(Command::SelfInsert, n, first)?;
+        }
+
+        if !rest.is_empty() {
+            self.read.queue_input(&rest);
+        }
+
+        Ok(())
     }
 
     fn find_binding(&self, seq: &str) -> FindResult<Command> {
@@ -473,6 +534,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             DigitArgument => {
+                self.read.state = InputState::Number;
                 self.write.set_digit_from_char(ch);
                 self.write.redraw_prompt(PromptType::Number)?;
             }
@@ -532,17 +594,29 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             CharacterSearch => {
-                if n > 0 {
-                    self.forward_search_char(n as usize)?;
-                } else if n < 0 {
-                    self.backward_search_char((-n) as usize)?;
+                if n >= 0 {
+                    self.read.state = InputState::CharSearch{
+                        n: n as usize,
+                        backward: false,
+                    }
+                } else {
+                    self.read.state = InputState::CharSearch{
+                        n: (-n) as usize,
+                        backward: true,
+                    };
                 }
             }
             CharacterSearchBackward => {
-                if n > 0 {
-                    self.backward_search_char(n as usize)?;
-                } else if n < 0 {
-                    self.forward_search_char((-n) as usize)?;
+                if n >= 0 {
+                    self.read.state = InputState::CharSearch{
+                        n: n as usize,
+                        backward: true,
+                    }
+                } else {
+                    self.read.state = InputState::CharSearch{
+                        n: (-n) as usize,
+                        backward: false,
+                    };
                 }
             }
             BackwardWord => {
@@ -729,6 +803,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             ForwardSearchHistory => {
+                self.read.state = InputState::TextSearch;
                 if self.read.last_cmd == Category::IncrementalSearch {
                     self.write.continue_search_history(false)?;
                 } else {
@@ -736,6 +811,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             ReverseSearchHistory => {
+                self.read.state = InputState::TextSearch;
                 if self.read.last_cmd == Category::IncrementalSearch {
                     self.write.continue_search_history(true)?;
                 } else {
@@ -743,6 +819,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             HistorySearchForward => {
+                self.read.state = InputState::TextSearch;
                 if self.read.last_cmd == Category::Search {
                     self.write.continue_history_search(false)?;
                 } else {
@@ -750,6 +827,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             HistorySearchBackward => {
+                self.read.state = InputState::TextSearch;
                 if self.read.last_cmd == Category::Search {
                     self.write.continue_history_search(true)?;
                 } else {
@@ -757,16 +835,8 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             QuotedInsert => {
-                self.read.read_next_raw = true;
-                if n > 0 {
-                    // `input_arg` is cleared when this command ends,
-                    // so we must store the count.
-                    self.read.insert_raw_count = n as usize;
-                } else {
-                    // In case of negative insert count,
-                    // a raw read is still performed, but no text inserted.
-                    self.read.insert_raw_count = 0;
-                }
+                self.read.state = InputState::QuotedInsert(
+                    if n >= 0 { n as usize } else { 0 });
             }
             OverwriteMode => {
                 self.read.overwrite_mode = !self.read.overwrite_mode;
@@ -835,14 +905,51 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     ///
     /// If the given position is out of bounds or is not aligned to `char` boundaries.
     pub fn blink(&mut self, pos: usize) -> io::Result<()> {
-        let orig = self.write.cursor;
-        self.write.move_to(pos)?;
-        self.write.flush()?;
+        self.write.blink(pos)?;
 
-        self.read.wait_for_input(
-            Some(Duration::from_millis(BLINK_TIMEOUT_MS)))?;
+        self.read.max_wait_duration = Some(BLINK_DURATION);
 
-        self.write.move_to(orig)
+        Ok(())
+    }
+
+    fn check_expire_blink(&mut self, now: Instant) -> io::Result<()> {
+        if self.write.check_expire_blink(now)? {
+            self.read.max_wait_duration = None;
+        }
+
+        Ok(())
+    }
+
+    fn check_expire_sequence(&mut self, now: Instant) -> io::Result<()> {
+        if let InputState::ContinueSequence{expiry: Some(expiry)} = self.read.state {
+            if now >= expiry {
+                self.read.max_wait_duration = None;
+                self.force_execute_sequence()?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn keyseq_expiry(&mut self) -> Option<Instant> {
+        if let Some(t) = self.read.keyseq_timeout {
+            self.read.max_wait_duration = Some(t);
+            Some(Instant::now() + t)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn check_expire_timeout(&mut self) -> io::Result<()> {
+        let now = Instant::now();
+
+        self.check_expire_blink(now)?;
+        self.check_expire_sequence(now)
+    }
+
+    fn expire_blink(&mut self) -> io::Result<()> {
+        self.read.max_wait_duration = None;
+        self.write.expire_blink()
     }
 
     fn build_completions(&mut self) {
@@ -943,11 +1050,109 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
 
         self.write.write_str("\n")?;
 
-        if self.read.page_completions {
-            self.show_page_completions(completions.len(), table)
+        let n_completions = completions.len();
+
+        if self.read.page_completions &&
+                n_completions >= self.read.completion_query_items {
+            // TODO: Replace borrowed data in `Table` with owned data.
+            // Then, store table here to avoid regenerating column widths
+            self.start_page_completions(n_completions)
         } else {
-            self.show_list_completions(table)
+            self.show_list_completions(table)?;
+            self.write.draw_prompt()
         }
+    }
+
+    fn start_page_completions(&mut self, n_completions: usize) -> io::Result<()> {
+        self.read.state = InputState::CompleteIntro;
+        self.write.redraw_prompt(PromptType::CompleteIntro(n_completions))
+    }
+
+    fn end_page_completions(&mut self) -> io::Result<()> {
+        self.read.state = InputState::NewSequence;
+        self.write.prompt_type = PromptType::Normal;
+        self.write.draw_prompt()
+    }
+
+    fn is_paging_completions(&self) -> bool {
+        match self.read.state {
+            InputState::CompleteMore(_) => true,
+            _ => false
+        }
+    }
+
+    fn show_completions_page(&mut self, offset: usize) -> io::Result<()> {
+        if let Some(compl) = self.read.completions.take() {
+            let width = self.write.screen_size.columns
+                .min(self.read.completion_display_width);
+            let n_lines = self.write.screen_size.lines - 1;
+
+            let completions = compl.iter()
+                .map(|compl| display_str(&compl.display(), Display::default()).into_owned())
+                .collect::<Vec<_>>();
+
+            let cols = format_columns(&completions, width,
+                self.read.print_completions_horizontally);
+            let mut table = Table::new(&completions, cols.as_ref().map(|c| &c[..]),
+                self.read.print_completions_horizontally);
+
+            for row in table.by_ref().skip(offset).take(n_lines) {
+                self.show_completion_line(row)?;
+            }
+
+            if table.has_more() {
+                self.read.completions = Some(compl);
+                self.read.state = InputState::CompleteMore(offset + n_lines);
+                self.write.prompt_type = PromptType::CompleteMore;
+                self.write.draw_prompt()?;
+            } else {
+                self.end_page_completions()?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn show_completions_line(&mut self, offset: usize) -> io::Result<()> {
+        if let Some(compl) = self.read.completions.take() {
+            let width = self.write.screen_size.columns
+                .min(self.read.completion_display_width);
+            let completions = compl.iter()
+                .map(|compl| display_str(&compl.display(), Display::default()).into_owned())
+                .collect::<Vec<_>>();
+
+            let cols = format_columns(&completions, width,
+                self.read.print_completions_horizontally);
+            let mut table = Table::new(&completions, cols.as_ref().map(|c| &c[..]),
+                self.read.print_completions_horizontally);
+
+            if let Some(row) = table.by_ref().skip(offset).next() {
+                self.show_completion_line(row)?;
+            }
+
+            if table.has_more() {
+                self.read.completions = Some(compl);
+                self.read.state = InputState::CompleteMore(offset + 1);
+                self.write.prompt_type = PromptType::CompleteMore;
+                self.write.draw_prompt()?;
+            } else {
+                self.end_page_completions()?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn show_completion_line<S: AsRef<str>>(&mut self, line: Line<S>) -> io::Result<()> {
+        let mut space = 0;
+
+        for (width, name) in line {
+            self.write.move_right(space)?;
+            self.write.write_str(name)?;
+            space = width - name.chars().count();
+        }
+
+        self.write.write_str("\n")
     }
 
     fn show_list_completions<S: AsRef<str>>(&mut self, table: Table<S>) -> io::Result<()> {
@@ -963,78 +1168,6 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
         }
 
         Ok(())
-    }
-
-    fn show_page_completions<S: AsRef<str>>(&mut self, n_completions: usize,
-            mut table: Table<S>) -> io::Result<()> {
-        let n_lines = self.write.screen_size.lines.max(2) - 1;
-        let mut show_more = true;
-        let mut show_lines = n_lines;
-
-        if n_completions >= self.read.completion_query_items {
-            let s = format!("Display all {} possibilities? (y/n)", n_completions);
-            self.write.write_str(&s)?;
-
-            loop {
-                let ch = match self.read.try_read_char(None)? {
-                    Some(ch) => ch,
-                    None => continue
-                };
-
-                match ch {
-                    'y' | 'Y' | ' ' => break,
-                    'n' | 'N' | DELETE => {
-                        show_more = false;
-                        break;
-                    }
-                    _ => continue
-                }
-            }
-
-            self.write.write_str("\n")?;
-        }
-
-        'show: while show_more {
-            for line in table.by_ref().take(show_lines) {
-                let mut space = 0;
-
-                for (width, name) in line {
-                    self.write.move_right(space)?;
-                    self.write.write_str(name)?;
-                    space = width - name.chars().count();
-                }
-                self.write.write_str("\n")?;
-            }
-
-            if !table.has_more() {
-                break;
-            }
-
-            self.write.write_str("--More--")?;
-
-            loop {
-                let ch = match self.read.try_read_char(None)? {
-                    Some(ch) => ch,
-                    None => continue
-                };
-
-                show_lines = match ch {
-                    'y' | 'Y' | ' ' => n_lines,
-                    '\r' => 1,
-                    'q' | 'n' | 'Q' | 'N' | DELETE => {
-                        self.write.clear_line()?;
-                        break 'show;
-                    }
-                    _ => continue
-                };
-
-                break;
-            }
-
-            self.write.clear_line()?;
-        }
-
-        self.write.draw_prompt()
     }
 
     fn next_completion(&mut self, n: usize) -> io::Result<()> {
@@ -1091,11 +1224,23 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     }
 
     fn abort_search_history(&mut self) -> io::Result<()> {
+        self.read.state = InputState::NewSequence;
         self.read.last_cmd = Category::Other;
         self.write.abort_search_history()
     }
 
+    fn end_search_history(&mut self) -> io::Result<()> {
+        self.read.state = InputState::NewSequence;
+        self.write.end_search_history()
+    }
+
     pub(crate) fn handle_resize(&mut self, size: Size) -> io::Result<()> {
+        self.expire_blink()?;
+
+        if self.is_paging_completions() {
+            self.end_page_completions()?;
+        }
+
         self.write.screen_size = size;
 
         let p = self.write.prompt_type;
@@ -1103,6 +1248,8 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     }
 
     pub(crate) fn handle_signal(&mut self, signal: Signal) -> io::Result<()> {
+        self.expire_blink()?;
+
         match signal {
             Signal::Continue => {
                 self.write.draw_prompt()?;
@@ -1120,22 +1267,6 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 self.write.draw_prompt()?;
             }
             _ => ()
-        }
-
-        Ok(())
-    }
-
-    fn backward_search_char(&mut self, n: usize) -> io::Result<()> {
-        if let Some(ch) = self.read.try_read_char(None)? {
-            self.write.backward_search_char(n, ch)?;
-        }
-
-        Ok(())
-    }
-
-    fn forward_search_char(&mut self, n: usize) -> io::Result<()> {
-        if let Some(ch) = self.read.try_read_char(None)? {
-            self.write.forward_search_char(n, ch)?;
         }
 
         Ok(())

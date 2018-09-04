@@ -69,11 +69,12 @@ impl<Term: Terminal> Interface<Term> {
     /// To use the default terminal interface, call `Interface::new` instead.
     pub fn with_term<T>(application: T, term: Term) -> io::Result<Interface<Term>>
             where T: Into<Cow<'static, str>> {
+        let size = term.lock_write().size()?;
         let read = Read::new(&term, application.into());
 
         Ok(Interface{
             term: term,
-            write: Mutex::new(Write::new()),
+            write: Mutex::new(Write::new(size)),
             read: Mutex::new(read),
         })
     }
