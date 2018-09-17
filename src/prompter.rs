@@ -819,7 +819,6 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             HistorySearchForward => {
-                self.read.state = InputState::TextSearch;
                 if self.read.last_cmd == Category::Search {
                     self.write.continue_history_search(false)?;
                 } else {
@@ -827,7 +826,6 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
                 }
             }
             HistorySearchBackward => {
-                self.read.state = InputState::TextSearch;
                 if self.read.last_cmd == Category::Search {
                     self.write.continue_history_search(true)?;
                 } else {
