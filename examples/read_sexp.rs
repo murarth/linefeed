@@ -14,9 +14,9 @@ use linefeed::{
 
 fn main() -> io::Result<()> {
     let interface = Interface::new("read-sexp-demo")?;
-    println! ("- this demonstrate linefeed's ability ");
-    println! ("  to `read-sexp` instead of simply `read-line`");
-    println! ("  i.e. text will not be committed until a sexp is met");
+    println! ("- This demonstrates linefeed's ability");
+    println! ("  to `read-sexp` instead of simply `read-line,`");
+    println! ("  i.e. text will not be committed until a sexp is met.");
     interface.set_prompt("read-sexp> ")?;
     interface.define_function("read-sexp", Arc::new(ReadSexp));
     // "\r" for <enter>
@@ -39,7 +39,7 @@ impl <Term: Terminal> Function<Term> for ReadSexp {
         &self,
         prompter: &mut Prompter<Term>,
         count: i32,
-        ch: char,
+        _ch: char,
     ) -> io::Result<()> {
         // println! ();
         // println! ("- ReadSexp::execute");
