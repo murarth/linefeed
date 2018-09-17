@@ -888,7 +888,18 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
         Ok(())
     }
 
-    fn accept_input(&mut self) -> io::Result<()> {
+    /// Accepts the current input buffer as user input.
+    ///
+    /// This method may be called by a [`Function`] implementation, immediately
+    /// before ending execution, in order to simulate the `accept-line` command;
+    /// e.g. to implement a command that extends the default behavior of the
+    /// `accept-line` action.
+    ///
+    /// Behavior of this method is undefined if called outside of a `Function`
+    /// implementation.
+    ///
+    /// [`Function`]: ../function/trait.Function.html
+    pub fn accept_input(&mut self) -> io::Result<()> {
         self.write.move_to_end()?;
         self.write.write_str("\n")?;
         self.read.input_accepted = true;

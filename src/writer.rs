@@ -289,6 +289,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         let mut col = start_col;
         let mut out = String::with_capacity(text.len());
 
+        let mut clear = false;
         let mut hidden = false;
 
         for ch in text.chars() {
@@ -320,6 +321,13 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
                             }
                         }
                     } else if ch == '\n' {
+                        if !clear {
+                            self.term.write(&out)?;
+                            out.clear();
+                            self.term.clear_to_screen_end()?;
+                            clear = true;
+                        }
+
                         out.push('\n');
                         col = 0;
                     } else if is_combining_mark(ch) {
@@ -852,11 +860,6 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         let n = start_col + self.display_size(&buf[..pos], start_col);
 
         (n / width, n % width)
-    }
-
-    pub fn clear_line(&mut self) -> io::Result<()> {
-        self.term.move_to_first_column()?;
-        self.term.clear_to_screen_end()
     }
 
     pub fn clear_screen(&mut self) -> io::Result<()> {

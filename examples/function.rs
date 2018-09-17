@@ -22,6 +22,10 @@ fn main() -> io::Result<()> {
 
     while let ReadResult::Input(line) = interface.read_line()? {
         println!("read input: {:?}", line);
+
+        if !line.trim().is_empty() {
+            interface.add_history_unique(line);
+        }
     }
 
     println!("Goodbye.");
