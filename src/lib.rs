@@ -29,9 +29,10 @@
 
 #![deny(missing_docs)]
 
+extern crate dirs;
 extern crate mortal;
 
-#[cfg(windows)] #[macro_use(DEFINE_GUID)] extern crate winapi;
+#[cfg(windows)] extern crate winapi;
 
 #[cfg(test)] #[macro_use] extern crate assert_matches;
 

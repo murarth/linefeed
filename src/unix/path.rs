@@ -1,5 +1,7 @@
-use std::env::{home_dir, var_os};
+use std::env::var_os;
 use std::path::PathBuf;
+
+use dirs::home_dir;
 
 pub fn env_init_file() -> Option<PathBuf> {
     var_os("INPUTRC").map(PathBuf::from)

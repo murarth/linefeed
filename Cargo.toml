@@ -18,6 +18,7 @@ readme = "README.md"
 travis-ci = { repository = "murarth/linefeed" }
 
 [dependencies]
+dirs = "1.0"
 mortal = "0.1.5"
 
 [target.'cfg(windows)'.dependencies]
