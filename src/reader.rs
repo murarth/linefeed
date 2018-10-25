@@ -911,6 +911,7 @@ impl<Term: Terminal> Read<Term> {
     }
 
     pub fn reset_data(&mut self) {
+        self.state = InputState::NewSequence;
         self.input_accepted = false;
         self.overwrite_mode = false;
         self.overwritten_append = 0;

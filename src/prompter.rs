@@ -101,8 +101,8 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
             self.write.is_prompt_drawn = false;
         }
 
-        self.read.state = InputState::Inactive;
         self.reset_input();
+        self.read.state = InputState::Inactive;
 
         Ok(())
     }
