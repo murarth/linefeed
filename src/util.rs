@@ -43,7 +43,8 @@ pub fn longest_common_prefix<'a, I, S>(iter: I) -> Option<&'a str> where
         let s = s.as_ref();
 
         let n = pfx.chars().zip(s.chars())
-            .take_while(|&(a, b)| a == b).count();
+            .take_while(|&(a, b)| a == b)
+            .map(|(ch, _)| ch.len_utf8()).sum();
 
         if n == 0 {
             return None;
@@ -381,6 +382,9 @@ mod test {
             Some("foo"));
         assert_eq!(longest_common_prefix(["alpha", "alpaca", "alto"].iter()),
             Some("al"));
+
+        assert_eq!(longest_common_prefix(["äöüx", "äöüy"].iter()),
+            Some("äöü"));
     }
 
     #[test]
