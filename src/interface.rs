@@ -8,14 +8,14 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use command::Command;
-use complete::{Completer};
-use function::Function;
-use inputrc::Directive;
-use reader::{Read, Reader, ReadLock, ReadResult};
-use terminal::{DefaultTerminal, Signal, Terminal};
-use variables::Variable;
-use writer::{Write, Writer, WriteLock};
+use crate::command::Command;
+use crate::complete::{Completer};
+use crate::function::Function;
+use crate::inputrc::Directive;
+use crate::reader::{Read, Reader, ReadLock, ReadResult};
+use crate::terminal::{DefaultTerminal, Signal, Terminal};
+use crate::variables::Variable;
+use crate::writer::{Write, Writer, WriteLock};
 
 /// The main interface to input reading and other terminal operations
 ///

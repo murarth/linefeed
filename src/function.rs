@@ -2,9 +2,9 @@
 
 use std::io;
 
-use command::Category;
-use prompter::Prompter;
-use terminal::Terminal;
+use crate::command::Category;
+use crate::prompter::Prompter;
+use crate::terminal::Terminal;
 
 /// Implements custom functionality for a `Prompter` command
 pub trait Function<Term: Terminal>: Send + Sync {

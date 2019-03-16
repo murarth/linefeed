@@ -12,19 +12,19 @@ use std::time::{Duration, Instant};
 
 use mortal::SequenceMap;
 
-use command::{Category, Command};
-use complete::{Completer, Completion, DummyCompleter};
-use function::Function;
-use inputrc::{parse_file, Directive};
-use interface::Interface;
-use prompter::Prompter;
-use sys::path::{env_init_file, system_init_file, user_init_file};
-use terminal::{
+use crate::command::{Category, Command};
+use crate::complete::{Completer, Completion, DummyCompleter};
+use crate::function::Function;
+use crate::inputrc::{parse_file, Directive};
+use crate::interface::Interface;
+use crate::prompter::Prompter;
+use crate::sys::path::{env_init_file, system_init_file, user_init_file};
+use crate::terminal::{
     RawRead, Signal, SignalSet, Size,
     Terminal, TerminalReader,
 };
-use util::{first_char, match_name};
-use variables::{Variable, Variables, VariableIter};
+use crate::util::{first_char, match_name};
+use crate::variables::{Variable, Variables, VariableIter};
 
 /// Default set of string characters
 pub const STRING_CHARS: &str = "\"'";
@@ -1062,7 +1062,7 @@ impl<'a> DoubleEndedIterator for BindingIter<'a> {
 }
 
 fn default_bindings() -> SequenceMap<Cow<'static, str>, Command> {
-    use command::Command::*;
+    use crate::command::Command::*;
 
     SequenceMap::from(vec![
         // Carriage return and line feed

@@ -4,7 +4,7 @@ use std::io;
 use std::time::Duration;
 
 use mortal::{self, PrepareConfig, PrepareState, TerminalReadGuard, TerminalWriteGuard};
-use sys;
+use crate::sys;
 
 pub use mortal::{CursorMode, Signal, SignalSet, Size};
 

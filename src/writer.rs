@@ -12,10 +12,10 @@ use std::ops::{Deref, DerefMut, Range};
 use std::sync::MutexGuard;
 use std::time::{Duration, Instant};
 
-use chars::{is_ctrl, unctrl, ESCAPE, RUBOUT};
-use reader::{START_INVISIBLE, END_INVISIBLE};
-use terminal::{CursorMode, Size, Terminal, TerminalWriter};
-use util::{
+use crate::chars::{is_ctrl, unctrl, ESCAPE, RUBOUT};
+use crate::reader::{START_INVISIBLE, END_INVISIBLE};
+use crate::terminal::{CursorMode, Size, Terminal, TerminalWriter};
+use crate::util::{
     backward_char, forward_char, backward_search_char, forward_search_char,
     filter_visible, is_combining_mark, is_wide, RangeArgument,
 };

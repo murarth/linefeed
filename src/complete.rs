@@ -4,8 +4,8 @@ use std::borrow::Cow::{self, Borrowed, Owned};
 use std::fs::read_dir;
 use std::path::{is_separator, MAIN_SEPARATOR};
 
-use prompter::Prompter;
-use terminal::Terminal;
+use crate::prompter::Prompter;
+use crate::terminal::Terminal;
 
 /// Represents a single possible completion
 #[derive(Clone, Debug)]

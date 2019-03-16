@@ -6,8 +6,8 @@ use std::io::{stderr, Read, Write};
 use std::path::Path;
 use std::str::{Chars, Lines};
 
-use chars::{ctrl, meta, parse_char_name};
-use command::Command;
+use crate::chars::{ctrl, meta, parse_char_name};
+use crate::command::Command;
 
 /// Parsed configuration directive
 #[derive(Clone, Debug)]
@@ -344,26 +344,26 @@ impl<'a> Iterator for Tokens<'a> {
 
         let tok = match ch {
             ':' => {
-                self.line = self.line[1..].trim_left();
+                self.line = self.line[1..].trim_start();
                 Token::Colon
             }
             '=' => {
-                self.line = self.line[1..].trim_left();
+                self.line = self.line[1..].trim_start();
                 Token::Equal
             }
             '$' => {
                 let (word, rest) = parse_word(&self.line[1..]);
-                self.line = rest.trim_left();
+                self.line = rest.trim_start();
                 Token::SpecialWord(word)
             }
             '"' => {
                 let (tok, rest) = parse_string(self.line);
-                self.line = rest.trim_left();
+                self.line = rest.trim_start();
                 tok
             }
             _ => {
                 let (word, rest) = parse_word(self.line);
-                self.line = rest.trim_left();
+                self.line = rest.trim_start();
                 Token::Word(word)
             }
         };
@@ -515,7 +515,7 @@ fn parse_word(s: &str) -> (&str, &str) {
 #[cfg(test)]
 mod test {
     use super::{Directive, parse_text};
-    use command::Command;
+    use crate::command::Command;
 
     fn one<T>(v: Vec<T>) -> T {
         assert_eq!(v.len(), 1);

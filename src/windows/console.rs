@@ -19,8 +19,8 @@ use winapi::um::wincon::{
 };
 use winapi::um::winuser;
 
-use chars::DELETE;
-use terminal::RawRead;
+use crate::chars::DELETE;
+use crate::terminal::RawRead;
 
 // Generate some sequences for special characters.
 // The basic ones align with common Unix terminals, so that they match up with

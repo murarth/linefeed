@@ -9,7 +9,7 @@ use std::mem::replace;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use terminal::{
+use crate::terminal::{
     CursorMode, RawRead, SignalSet, Size,
     Terminal, TerminalReader, TerminalWriter,
 };
@@ -514,7 +514,7 @@ impl<'a> TerminalWriter<MemoryTerminal> for MemoryWriteGuard<'a> {
 #[cfg(test)]
 mod test {
     use super::MemoryTerminal;
-    use terminal::Size;
+    use crate::terminal::Size;
 
     fn assert_lines(mem: &MemoryTerminal, tests: &[&str]) {
         let mut lines = mem.lines();

@@ -29,21 +29,16 @@
 
 #![deny(missing_docs)]
 
-extern crate dirs;
-extern crate mortal;
-
-#[cfg(windows)] extern crate winapi;
-
 #[cfg(test)] #[macro_use] extern crate assert_matches;
 
-pub use command::Command;
-pub use complete::{Completer, Completion, Suffix};
-pub use function::Function;
-pub use interface::Interface;
-pub use prompter::Prompter;
-pub use reader::{Reader, ReadResult};
-pub use terminal::{DefaultTerminal, Signal, Terminal};
-pub use writer::Writer;
+pub use crate::command::Command;
+pub use crate::complete::{Completer, Completion, Suffix};
+pub use crate::function::Function;
+pub use crate::interface::Interface;
+pub use crate::prompter::Prompter;
+pub use crate::reader::{Reader, ReadResult};
+pub use crate::terminal::{DefaultTerminal, Signal, Terminal};
+pub use crate::writer::Writer;
 
 pub mod chars;
 pub mod command;
@@ -70,8 +65,8 @@ mod sys;
 
 #[cfg(test)]
 mod test {
-    use interface::Interface;
-    use terminal::{DefaultTerminal, Terminal};
+    use crate::interface::Interface;
+    use crate::terminal::{DefaultTerminal, Terminal};
 
     fn assert_has_traits<T: 'static + Send + Sync>() {}
 

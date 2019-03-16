@@ -4,7 +4,7 @@ use std::time::Duration;
 use mortal::{Event, TerminalReadGuard};
 use mortal::unix::TerminalExt;
 
-use terminal::RawRead;
+use crate::terminal::RawRead;
 
 pub fn terminal_read(term: &mut TerminalReadGuard, buf: &mut Vec<u8>) -> io::Result<RawRead> {
     let mut buffer = [0; 1024];

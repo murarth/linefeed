@@ -3,7 +3,7 @@
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::fmt;
 
-use chars::escape_sequence;
+use crate::chars::escape_sequence;
 
 macro_rules! define_commands {
     ( $( #[$meta:meta] $name:ident => $str:expr , )+ ) => {

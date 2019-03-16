@@ -8,22 +8,22 @@ use std::time::Instant;
 
 use mortal::FindResult;
 
-use chars::{is_ctrl, is_printable, DELETE, EOF};
-use command::{Category, Command};
-use complete::Completion;
-use function::Function;
-use reader::{BindingIter, InputState, ReadLock, ReadResult};
-use table::{format_columns, Line, Table};
-use terminal::{CursorMode, Signal, Size, Terminal};
-use util::{
+use crate::chars::{is_ctrl, is_printable, DELETE, EOF};
+use crate::command::{Category, Command};
+use crate::complete::Completion;
+use crate::function::Function;
+use crate::reader::{BindingIter, InputState, ReadLock, ReadResult};
+use crate::table::{format_columns, Line, Table};
+use crate::terminal::{CursorMode, Signal, Size, Terminal};
+use crate::util::{
     get_open_paren, find_matching_paren, first_word,
     longest_common_prefix, repeat_char,
     back_n_words, forward_n_words,
     backward_char, forward_char, backward_word, forward_word,
     word_start, word_end, RangeArgument,
 };
-use variables::VariableIter;
-use writer::{
+use crate::variables::VariableIter;
+use crate::writer::{
     BLINK_DURATION, display_str,
     Digit, Display, HistoryIter, PromptType, Writer, WriteLock,
 };
@@ -467,7 +467,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
     }
 
     fn execute_command(&mut self, cmd: Command, n: i32, ch: char) -> io::Result<()> {
-        use command::Command::*;
+        use crate::command::Command::*;
 
         let mut category = cmd.category();
 

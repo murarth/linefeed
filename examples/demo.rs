@@ -131,7 +131,7 @@ fn split_first_word(s: &str) -> (&str, &str) {
     let s = s.trim();
 
     match s.find(|ch: char| ch.is_whitespace()) {
-        Some(pos) => (&s[..pos], s[pos..].trim_left()),
+        Some(pos) => (&s[..pos], s[pos..].trim_start()),
         None => (s, "")
     }
 }

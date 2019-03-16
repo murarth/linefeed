@@ -6,7 +6,7 @@ use std::ops::{Range, RangeFrom, RangeFull, RangeTo};
 use std::str::{from_utf8, from_utf8_unchecked};
 
 pub fn filter_visible(s: &str) -> Cow<str> {
-    use reader::{START_INVISIBLE, END_INVISIBLE};
+    use crate::reader::{START_INVISIBLE, END_INVISIBLE};
 
     if !s.contains(START_INVISIBLE) {
         return Cow::Borrowed(s);
