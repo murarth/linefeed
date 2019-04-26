@@ -22,7 +22,7 @@ To include `linefeed` in your project, add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-linefeed = "0.5"
+linefeed = "0.6"
 ```
 
 ### Demo
