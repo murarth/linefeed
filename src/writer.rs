@@ -6,7 +6,7 @@ use std::borrow::Cow::{self, Borrowed, Owned};
 use std::collections::{vec_deque, VecDeque};
 use std::fmt;
 use std::io;
-use std::iter::repeat;
+use std::iter::{repeat, Skip};
 use std::mem::swap;
 use std::ops::{Deref, DerefMut, Range};
 use std::sync::MutexGuard;
@@ -76,9 +76,15 @@ pub(crate) struct Write {
     /// Position of the cursor if currently performing a blink
     blink: Option<Blink>,
 
+    /// Stored history entries
     pub history: VecDeque<String>,
+    /// History entry currently being edited;
+    /// `None` if the new buffer is being edited
     pub history_index: Option<usize>,
+    /// Maximum size of history
     history_size: usize,
+    /// Number of history entries added since last loading history
+    history_new_entries: usize,
 
     /// Whether the prompt is drawn; i.e. a `read_line` operation is in progress
     pub is_prompt_drawn: bool,
@@ -606,6 +612,8 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
         }
 
         self.history.push_back(line);
+        self.history_new_entries = self.history.len()
+            .min(self.history_new_entries + 1);
     }
 
     pub fn add_history_unique(&mut self, line: String) {
@@ -618,10 +626,17 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
     pub fn clear_history(&mut self) {
         self.truncate_history(0);
+        self.history_new_entries = 0;
     }
 
     pub fn remove_history(&mut self, n: usize) {
         if n < self.history.len() {
+            let first_new = self.history.len() - self.history_new_entries;
+
+            if n >= first_new {
+                self.history_new_entries -= 1;
+            }
+
             self.history.remove(n);
         }
     }
@@ -631,6 +646,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
 
         if n < len {
             let _ = self.history.drain(..len - n);
+            self.history_new_entries = self.history_new_entries.max(n);
         }
     }
 
@@ -1061,6 +1077,7 @@ impl Write {
             history: VecDeque::new(),
             history_index: None,
             history_size: MAX_HISTORY,
+            history_new_entries: 0,
 
             is_prompt_drawn: false,
 
@@ -1089,6 +1106,15 @@ impl Write {
         HistoryIter(self.history.iter())
     }
 
+    pub fn new_history(&self) -> Skip<HistoryIter> {
+        let first_new = self.history.len() - self.history_new_entries;
+        self.history().skip(first_new)
+    }
+
+    pub fn new_history_entries(&self) -> usize {
+        self.history_new_entries
+    }
+
     pub fn reset_data(&mut self) {
         self.buffer.clear();
         self.backup_buffer.clear();
@@ -1099,6 +1125,10 @@ impl Write {
 
         self.input_arg = Digit::None;
         self.explicit_arg = false;
+    }
+
+    pub fn reset_new_history(&mut self) {
+        self.history_new_entries = 0;
     }
 
     pub fn set_buffer(&mut self, buf: &str) {

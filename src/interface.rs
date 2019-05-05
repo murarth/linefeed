@@ -2,8 +2,11 @@
 
 use std::borrow::Cow;
 use std::fmt;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, BufWriter, Write as IoWrite};
+use std::fs::{File, OpenOptions};
+use std::io::{
+    self, BufRead, BufReader, BufWriter,
+    Read as _, Seek, SeekFrom, Write as _,
+};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -326,16 +329,84 @@ impl<Term: Terminal> Interface<Term> {
     }
 
     /// Save history entries to the specified file.
+    ///
+    /// If the file does not exist, it is created and all history entries are
+    /// written to the new file.
+    ///
+    /// If the file does exist, entries added since the last call to `save_history`
+    /// (or since the start of the application) are appended to the named file.
+    ///
+    /// If the file would contain more than `self.history_size()` entries,
+    /// it is first truncated, discarding the oldest entries.
     pub fn save_history<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        let file = File::create(path)?;
+        let path = path.as_ref();
+        let mut w = self.lock_write();
+
+        if !path.exists() || w.history_size() == !0 {
+            self.append_history(path, &w)?;
+        } else {
+            self.rewrite_history(path, &w)?;
+        }
+
+        w.reset_new_history();
+        Ok(())
+    }
+
+    fn append_history<P: AsRef<Path>>(&self, path: P, w: &WriteLock<Term>)
+            -> io::Result<()> {
+        let file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path.as_ref())?;
+
+        self.append_history_to(&file, w)
+    }
+
+    fn append_history_to(&self, file: &File, w: &WriteLock<Term>) -> io::Result<()> {
         let mut wtr = BufWriter::new(file);
 
-        for entry in self.lock_write().history() {
+        for entry in w.new_history() {
             wtr.write_all(entry.as_bytes())?;
             wtr.write_all(b"\n")?;
         }
 
         wtr.flush()
+    }
+
+    fn rewrite_history<P: AsRef<Path>>(&self, path: P, w: &WriteLock<Term>)
+            -> io::Result<()> {
+        fn nth_line(s: &str, n: usize) -> Option<usize> {
+            let start = s.as_ptr() as usize;
+
+            s.lines().nth(n)
+                .map(|s| s.as_ptr() as usize - start)
+        }
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(path.as_ref())?;
+
+        let mut hist = String::new();
+
+        file.read_to_string(&mut hist)?;
+
+        let n_lines = hist.lines().count();
+        let n = n_lines.saturating_sub(
+            w.history_size() - w.new_history_entries());
+
+        if n != 0 {
+            if let Some(pos) = nth_line(&hist, n) {
+                file.seek(SeekFrom::Start(0))?;
+                file.write_all(hist[pos..].as_bytes())?;
+
+                let n = file.seek(SeekFrom::Current(0))?;
+                file.set_len(n)?;
+            }
+        }
+
+        self.append_history_to(&file, w)
     }
 
     /// Load history entries from the specified file.
@@ -348,6 +419,8 @@ impl<Term: Terminal> Interface<Term> {
         for line in rdr.lines() {
             writer.add_history(line?);
         }
+
+        writer.reset_new_history();
 
         Ok(())
     }
