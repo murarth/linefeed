@@ -409,11 +409,11 @@ impl Terminal for MemoryTerminal {
 
     fn name(&self) -> &str { "memory-terminal" }
 
-    fn lock_read<'a>(&'a self) -> Box<TerminalReader<Self> + 'a> {
+    fn lock_read<'a>(&'a self) -> Box<dyn TerminalReader<Self> + 'a> {
         Box::new(MemoryReadGuard(self.lock_reader()))
     }
 
-    fn lock_write<'a>(&'a self) -> Box<TerminalWriter<Self> + 'a> {
+    fn lock_write<'a>(&'a self) -> Box<dyn TerminalWriter<Self> + 'a> {
         Box::new(MemoryWriteGuard(self.lock_writer()))
     }
 }
@@ -427,14 +427,14 @@ impl<'a> TerminalReader<MemoryTerminal> for MemoryReadGuard<'a> {
             -> io::Result<()> { Ok(()) }
 
     unsafe fn prepare_with_lock(&mut self,
-            _lock: &mut TerminalWriter<MemoryTerminal>,
+            _lock: &mut dyn TerminalWriter<MemoryTerminal>,
             _block_signals: bool, _report_signals: SignalSet)
             -> io::Result<()> { Ok(()) }
 
     fn restore(&mut self, _state: ()) -> io::Result<()> { Ok(()) }
 
     unsafe fn restore_with_lock(&mut self,
-            _lock: &mut TerminalWriter<MemoryTerminal>, _state: ())
+            _lock: &mut dyn TerminalWriter<MemoryTerminal>, _state: ())
             -> io::Result<()> { Ok(()) }
 
     fn read(&mut self, buf: &mut Vec<u8>) -> io::Result<RawRead> {

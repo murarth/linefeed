@@ -41,13 +41,13 @@ pub trait Terminal: Sized + Send + Sync {
     /// that lock and granting access to such operations.
     ///
     /// The lock must not be released until the returned value is dropped.
-    fn lock_read<'a>(&'a self) -> Box<TerminalReader<Self> + 'a>;
+    fn lock_read<'a>(&'a self) -> Box<dyn TerminalReader<Self> + 'a>;
 
     /// Acquires a lock on terminal write operations and returns a value holding
     /// that lock and granting access to such operations.
     ///
     /// The lock must not be released until the returned value is dropped.
-    fn lock_write<'a>(&'a self) -> Box<TerminalWriter<Self> + 'a>;
+    fn lock_write<'a>(&'a self) -> Box<dyn TerminalWriter<Self> + 'a>;
 }
 
 /// Holds a lock on `Terminal` read operations
@@ -75,7 +75,7 @@ pub trait TerminalReader<Term: Terminal> {
     ///
     /// This method must be called with a `TerminalWriter` instance returned
     /// by the same `Terminal` instance to which this `TerminalReader` belongs.
-    unsafe fn prepare_with_lock(&mut self, lock: &mut TerminalWriter<Term>,
+    unsafe fn prepare_with_lock(&mut self, lock: &mut dyn TerminalWriter<Term>,
             block_signals: bool, report_signals: SignalSet)
             -> io::Result<Term::PrepareState>;
 
@@ -88,7 +88,7 @@ pub trait TerminalReader<Term: Terminal> {
     ///
     /// This method must be called with a `TerminalWriter` instance returned
     /// by the same `Terminal` instance to which this `TerminalReader` belongs.
-    unsafe fn restore_with_lock(&mut self, lock: &mut TerminalWriter<Term>,
+    unsafe fn restore_with_lock(&mut self, lock: &mut dyn TerminalWriter<Term>,
             state: Term::PrepareState) -> io::Result<()>;
 
     /// Reads some input from the terminal and appends it to the given buffer.
@@ -170,7 +170,7 @@ impl DefaultTerminal {
         mortal::Terminal::stderr().map(DefaultTerminal)
     }
 
-    unsafe fn cast_writer<'a>(writer: &'a mut TerminalWriter<Self>)
+    unsafe fn cast_writer<'a>(writer: &'a mut dyn TerminalWriter<Self>)
             -> &'a mut TerminalWriteGuard<'a> {
         &mut *(writer as *mut _ as *mut TerminalWriteGuard)
     }
@@ -183,11 +183,11 @@ impl Terminal for DefaultTerminal {
         self.0.name()
     }
 
-    fn lock_read<'a>(&'a self) -> Box<TerminalReader<Self> + 'a> {
+    fn lock_read<'a>(&'a self) -> Box<dyn TerminalReader<Self> + 'a> {
         Box::new(self.0.lock_read().unwrap())
     }
 
-    fn lock_write<'a>(&'a self) -> Box<TerminalWriter<Self> + 'a> {
+    fn lock_write<'a>(&'a self) -> Box<dyn TerminalWriter<Self> + 'a> {
         Box::new(self.0.lock_write().unwrap())
     }
 }
@@ -205,7 +205,7 @@ impl<'a> TerminalReader<DefaultTerminal> for TerminalReadGuard<'a> {
     }
 
     unsafe fn prepare_with_lock(&mut self,
-            lock: &mut TerminalWriter<DefaultTerminal>,
+            lock: &mut dyn TerminalWriter<DefaultTerminal>,
             block_signals: bool, report_signals: SignalSet)
             -> io::Result<PrepareState> {
         let lock = DefaultTerminal::cast_writer(lock);
@@ -224,7 +224,7 @@ impl<'a> TerminalReader<DefaultTerminal> for TerminalReadGuard<'a> {
     }
 
     unsafe fn restore_with_lock(&mut self,
-            lock: &mut TerminalWriter<DefaultTerminal>, state: PrepareState)
+            lock: &mut dyn TerminalWriter<DefaultTerminal>, state: PrepareState)
             -> io::Result<()> {
         let lock = DefaultTerminal::cast_writer(lock);
         self.restore_with_lock(lock, state)
