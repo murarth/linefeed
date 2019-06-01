@@ -122,12 +122,12 @@ pub(crate) struct Write {
 }
 
 pub(crate) struct WriteLock<'a, Term: 'a + Terminal> {
-    term: Box<TerminalWriter<Term> + 'a>,
+    term: Box<dyn TerminalWriter<Term> + 'a>,
     data: MutexGuard<'a, Write>,
 }
 
 impl<'a, Term: Terminal> WriteLock<'a, Term> {
-    pub fn new(term: Box<TerminalWriter<Term> + 'a>, data: MutexGuard<'a, Write>)
+    pub fn new(term: Box<dyn TerminalWriter<Term> + 'a>, data: MutexGuard<'a, Write>)
             -> WriteLock<'a, Term> {
         WriteLock{term, data}
     }

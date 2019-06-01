@@ -455,7 +455,7 @@ impl<'a, 'b: 'a, Term: 'b + Terminal> Prompter<'a, 'b, Term> {
         self.read.bindings.find(seq).cloned()
     }
 
-    fn get_function(&self, name: &str) -> Option<&Arc<Function<Term>>> {
+    fn get_function(&self, name: &str) -> Option<&Arc<dyn Function<Term>>> {
         self.read.functions.get(name)
     }
 

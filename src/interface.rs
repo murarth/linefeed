@@ -201,13 +201,13 @@ impl<Term: Terminal> Interface<Term> {
     }
 
     /// Returns a clone of the current completer instance.
-    pub fn completer(&self) -> Arc<Completer<Term>> {
+    pub fn completer(&self) -> Arc<dyn Completer<Term>> {
         self.lock_reader().completer().clone()
     }
 
     /// Replaces the current completer, returning the previous instance.
-    pub fn set_completer(&self, completer: Arc<Completer<Term>>)
-            -> Arc<Completer<Term>> {
+    pub fn set_completer(&self, completer: Arc<dyn Completer<Term>>)
+            -> Arc<dyn Completer<Term>> {
         self.lock_reader().set_completer(completer)
     }
 
@@ -277,15 +277,15 @@ impl<Term: Terminal> Interface<Term> {
     /// this is not a requirement.
     ///
     /// Returns the function previously defined with the same name.
-    pub fn define_function<T>(&self, name: T, cmd: Arc<Function<Term>>)
-            -> Option<Arc<Function<Term>>> where T: Into<Cow<'static, str>> {
+    pub fn define_function<T>(&self, name: T, cmd: Arc<dyn Function<Term>>)
+            -> Option<Arc<dyn Function<Term>>> where T: Into<Cow<'static, str>> {
         self.lock_reader().define_function(name, cmd)
     }
 
     /// Removes a function defined with the given name.
     ///
     /// Returns the defined function.
-    pub fn remove_function(&self, name: &str) -> Option<Arc<Function<Term>>> {
+    pub fn remove_function(&self, name: &str) -> Option<Arc<dyn Function<Term>>> {
         self.lock_reader().remove_function(name)
     }
 

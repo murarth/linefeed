@@ -66,7 +66,7 @@ pub(crate) struct Read<Term: Terminal> {
     pub macro_buffer: String,
 
     pub bindings: SequenceMap<Cow<'static, str>, Command>,
-    pub functions: HashMap<Cow<'static, str>, Arc<Function<Term>>>,
+    pub functions: HashMap<Cow<'static, str>, Arc<dyn Function<Term>>>,
 
     /// Current input sequence
     pub sequence: String,
@@ -81,7 +81,7 @@ pub(crate) struct Read<Term: Terminal> {
     pub overwritten_chars: String,
 
     /// Configured completer
-    pub completer: Arc<Completer<Term>>,
+    pub completer: Arc<dyn Completer<Term>>,
     /// Character appended to completions
     pub completion_append_character: Option<char>,
     /// Current set of possible completions
@@ -113,7 +113,7 @@ pub(crate) struct Read<Term: Terminal> {
 }
 
 pub(crate) struct ReadLock<'a, Term: 'a + Terminal> {
-    term: Box<TerminalReader<Term> + 'a>,
+    term: Box<dyn TerminalReader<Term> + 'a>,
     data: MutexGuard<'a, Read<Term>>,
 }
 
@@ -450,13 +450,13 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     }
 
     /// Returns a reference to the current completer instance.
-    pub fn completer(&self) -> &Arc<Completer<Term>> {
+    pub fn completer(&self) -> &Arc<dyn Completer<Term>> {
         &self.lock.completer
     }
 
     /// Replaces the current completer, returning the previous instance.
-    pub fn set_completer(&mut self, completer: Arc<Completer<Term>>)
-            -> Arc<Completer<Term>> {
+    pub fn set_completer(&mut self, completer: Arc<dyn Completer<Term>>)
+            -> Arc<dyn Completer<Term>> {
         replace(&mut self.lock.completer, completer)
     }
 
@@ -698,15 +698,15 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
     /// this is not a requirement.
     ///
     /// Returns the function previously defined with the same name.
-    pub fn define_function<T>(&mut self, name: T, cmd: Arc<Function<Term>>)
-            -> Option<Arc<Function<Term>>> where T: Into<Cow<'static, str>> {
+    pub fn define_function<T>(&mut self, name: T, cmd: Arc<dyn Function<Term>>)
+            -> Option<Arc<dyn Function<Term>>> where T: Into<Cow<'static, str>> {
         self.lock.define_function(name, cmd)
     }
 
     /// Removes a function defined with the given name.
     ///
     /// Returns the defined function.
-    pub fn remove_function(&mut self, name: &str) -> Option<Arc<Function<Term>>> {
+    pub fn remove_function(&mut self, name: &str) -> Option<Arc<dyn Function<Term>>> {
         self.lock.remove_function(name)
     }
 
@@ -734,7 +734,7 @@ impl<'a, Term: 'a + Terminal> Reader<'a, Term> {
 }
 
 impl<'a, Term: 'a + Terminal> ReadLock<'a, Term> {
-    pub fn new(term: Box<TerminalReader<Term> + 'a>, data: MutexGuard<'a, Read<Term>>)
+    pub fn new(term: Box<dyn TerminalReader<Term> + 'a>, data: MutexGuard<'a, Read<Term>>)
             -> ReadLock<'a, Term> {
         ReadLock{term, data}
     }
@@ -950,12 +950,12 @@ impl<Term: Terminal> Read<Term> {
             .map(|(_, cmd)| cmd)
     }
 
-    pub fn define_function<T>(&mut self, name: T, cmd: Arc<Function<Term>>)
-            -> Option<Arc<Function<Term>>> where T: Into<Cow<'static, str>> {
+    pub fn define_function<T>(&mut self, name: T, cmd: Arc<dyn Function<Term>>)
+            -> Option<Arc<dyn Function<Term>>> where T: Into<Cow<'static, str>> {
         self.functions.insert(name.into(), cmd)
     }
 
-    pub fn remove_function(&mut self, name: &str) -> Option<Arc<Function<Term>>> {
+    pub fn remove_function(&mut self, name: &str) -> Option<Arc<dyn Function<Term>>> {
         self.functions.remove(name)
     }
 
