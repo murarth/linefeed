@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - '**.rs'
+      - '**.toml'
+      - '.github/workflows/ci.yml'
+  push:
+    branches: [master]
+    paths:
+      - '**.rs'
+      - '**.toml'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  Test:
+    strategy:
+      fail-fast: false
+
+      matrix:
+        platform:
+        - { target: x86_64-pc-windows-gnu, os: windows-latest }
+        - { target: x86_64-pc-windows-msvc, os: windows-latest }
+        - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+
+    runs-on: ${{ matrix.platform.os }}
+
+    steps:
+    - uses: actions/checkout@v1
+    - uses: hecrj/setup-rust-action@v1
+      with:
+        rust-version: stable-${{ matrix.platform.target }}
+
+    - name: Build
+      run: cargo build --verbose
+
+    - name: Test
+      run: cargo test --verbose
+
+    env:
+      RUST_BACKTRACE: 1
+      RUST_INCREMENTAL: 0
+      RUSTFLAGS: "-C debuginfo=0"
