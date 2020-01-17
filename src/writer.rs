@@ -974,7 +974,7 @@ impl<'a, Term: Terminal> WriteLock<'a, Term> {
     pub fn set_digit_from_char(&mut self, ch: char) {
         let digit = match ch {
             '-' => Digit::NegNone,
-            '0' ... '9' => Digit::from(ch),
+            '0' ..= '9' => Digit::from(ch),
             _ => Digit::None
         };
 
@@ -1238,7 +1238,7 @@ impl Digit {
 impl From<char> for Digit {
     /// Convert a decimal digit character to a `Digit` value.
     ///
-    /// The input must be in the range `'0' ... '9'`.
+    /// The input must be in the range `'0' ..= '9'`.
     fn from(ch: char) -> Digit {
         let n = (ch as u8) - b'0';
         Digit::Num(n as i32)
@@ -1381,18 +1381,18 @@ fn complete_intro(n: usize) -> String {
 fn number_len(n: i32) -> usize {
     match n {
         -1_000_000              => 8,
-        -  999_999 ... -100_000 => 7,
-        -   99_999 ... - 10_000 => 6,
-        -    9_999 ... -  1_000 => 5,
-        -      999 ... -    100 => 4,
-        -       99 ... -     10 => 3,
-        -        9 ... -      1 => 2,
-                 0 ...        9 => 1,
-                10 ...       99 => 2,
-               100 ...      999 => 3,
-             1_000 ...    9_999 => 4,
-            10_000 ...   99_999 => 5,
-           100_000 ...  999_999 => 6,
+        -  999_999 ..= -100_000 => 7,
+        -   99_999 ..= - 10_000 => 6,
+        -    9_999 ..= -  1_000 => 5,
+        -      999 ..= -    100 => 4,
+        -       99 ..= -     10 => 3,
+        -        9 ..= -      1 => 2,
+                 0 ..=        9 => 1,
+                10 ..=       99 => 2,
+               100 ..=      999 => 3,
+             1_000 ..=    9_999 => 4,
+            10_000 ..=   99_999 => 5,
+           100_000 ..=  999_999 => 6,
          1_000_000              => 7,
         _ => unreachable!()
     }

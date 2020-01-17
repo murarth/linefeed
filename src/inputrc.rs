@@ -444,7 +444,7 @@ fn parse_escape(chars: &mut Chars) -> Option<String> {
 
             n as char
         }
-        '0' ... '3' => {
+        '0' ..= '3' => {
             let mut n = ch as u8 - b'0';
 
             for _ in 0..2 {
