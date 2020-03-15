@@ -15,9 +15,6 @@ keywords = ["console", "terminal", "input", "readline"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
 
-[badges]
-travis-ci = { repository = "murarth/linefeed" }
-
 [dependencies]
 dirs = "1.0"
 mortal = "0.2"
