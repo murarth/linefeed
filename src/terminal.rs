@@ -165,6 +165,7 @@ impl DefaultTerminal {
         mortal::Terminal::new().map(DefaultTerminal)
     }
 
+    #[cfg(any(unix))]
     /// Unix only.  
     /// Opens access to the terminal device associated with a tty path
     pub fn new_path(path: String) -> io::Result<DefaultTerminal> {
