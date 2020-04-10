@@ -165,6 +165,12 @@ impl DefaultTerminal {
         mortal::Terminal::new().map(DefaultTerminal)
     }
 
+    /// Unix only.  
+    /// Opens access to the terminal device associated with a tty path
+    pub fn new_path(path: String) -> io::Result<DefaultTerminal> {
+        mortal::unix::OpenTerminalExt::from_path(path).map(DefaultTerminal)
+    }
+
     /// Opens access to the terminal device associated with standard error.
     pub fn stderr() -> io::Result<DefaultTerminal> {
         mortal::Terminal::stderr().map(DefaultTerminal)
