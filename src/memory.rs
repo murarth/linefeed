@@ -5,7 +5,6 @@
 use std::cmp::min;
 use std::iter::repeat;
 use std::io;
-use std::mem::replace;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -318,7 +317,7 @@ impl Writer {
             self.col = min(self.col, new_size.columns);
             self.line = min(self.line, new_size.lines);
             self.size = new_size;
-            replace(&mut self.memory, new_buf);
+            self.memory = new_buf;
         }
     }
 
