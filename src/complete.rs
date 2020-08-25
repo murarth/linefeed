@@ -191,8 +191,7 @@ pub fn complete_path(path: &str) -> Vec<Completion> {
                 if let Ok(path) = ent_name.into_string() {
                     if path.starts_with(fname) {
                         let (name, display) = if let Some(dir) = base_dir {
-                            (format!("{}{}{}", dir, MAIN_SEPARATOR, path),
-                                Some(path))
+                            (format!("{}{}", dir, path), Some(path))
                         } else {
                             (path, None)
                         };
@@ -327,7 +326,7 @@ fn needs_escape(ch: char) -> bool {
 
 fn split_path(path: &str) -> (Option<&str>, &str) {
     match path.rfind(is_separator) {
-        Some(pos) => (Some(&path[..pos]), &path[pos + 1..]),
+        Some(pos) => (Some(&path[..pos + 1]), &path[pos + 1..]),
         None => (None, path)
     }
 }
